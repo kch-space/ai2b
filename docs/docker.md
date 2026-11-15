@@ -2,9 +2,11 @@
 
 ## 启动与配置
 
-在克隆的 `ai2b` 项目目录中执行：
+安装 Git、Docker Engine / Docker Desktop 和 Docker Compose 后，克隆仓库并进入项目目录启动。已克隆仓库的用户可直接在项目目录执行 Docker Compose 命令。
 
 ```bash
+git clone https://github.com/kch-space/ai2b.git
+cd ai2b
 docker compose up -d --build
 docker compose ps
 docker compose logs -f --tail=100 ai2b

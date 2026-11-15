@@ -6,10 +6,11 @@
 
 ## 启动
 
-需要 Python 3.10 或更高版本，运行时无需安装第三方依赖。
+安装 Git 和 Python 3.10 或更高版本后，克隆仓库并启动。运行时无需安装第三方依赖。
 
 ```bash
-cd /Users/kch/Documents/code/codex开发/ai2b
+git clone https://github.com/kch-space/ai2b.git
+cd ai2b
 python3.12 app.py
 ```
 
@@ -25,9 +26,11 @@ python3.12 app.py --demo
 
 ## Docker 部署
 
-安装 Docker Engine / Docker Desktop 和 Docker Compose 后，在项目目录执行：
+安装 Git、Docker Engine / Docker Desktop 和 Docker Compose 后，克隆仓库并启动。已克隆仓库的用户可直接在项目目录执行 Docker Compose 命令。
 
 ```bash
+git clone https://github.com/kch-space/ai2b.git
+cd ai2b
 docker compose up -d --build
 docker compose ps
 docker compose logs -f --tail=100 ai2b
