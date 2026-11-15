@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
+import re
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -28,10 +29,11 @@ def make_server(service, host="127.0.0.1", port=8765):
             self.wfile.write(payload)
 
         def valid_host(self):
-            allowed = {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
-            if self.server.server_port == 80:
-                allowed.update({"127.0.0.1", "localhost"})
-            return self.headers.get("Host", "").lower() in allowed
+            # Docker may map a different host port to the internal service port.
+            # Keep the loopback hostname restriction to prevent DNS rebinding.
+            match = re.fullmatch(r"(?:127\.0\.0\.1|localhost)(?::([0-9]{1,5}))?",
+                                 self.headers.get("Host", "").lower())
+            return bool(match and (match[1] is None or 1 <= int(match[1]) <= 65535))
 
         def do_GET(self):
             if not self.valid_host():

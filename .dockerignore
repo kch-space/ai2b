@@ -1,0 +1,15 @@
+# Only application source enters the build context.
+**
+!Dockerfile
+!app.py
+!analyst/
+analyst/**
+!analyst/*.py
+!static/
+static/**
+!static/*.html
+!static/*.css
+!static/*.js
+!static/*.svg
+**/__pycache__/
+**/*.py[cod]

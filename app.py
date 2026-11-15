@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import signal
 from pathlib import Path
 
 from analyst.service import Analyst
@@ -26,6 +27,7 @@ def main():
     root = Path(__file__).resolve().parent
     load_env(root / ".env")
     parser = argparse.ArgumentParser(description="AI2B · 个人币圈分析师")
+    parser.add_argument("--host", default="127.0.0.1", help="监听地址；容器内使用 0.0.0.0")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--demo", action="store_true", help="显式使用合成演示行情")
     parser.add_argument("--data-dir", default=str(root / ".data"))
@@ -41,11 +43,12 @@ def main():
     if defaults:
         analyst.store.save_settings(defaults)
     try:
-        server = make_server(analyst, port=args.port)
+        server = make_server(analyst, host=args.host, port=args.port)
     except OSError as exc:
         raise SystemExit(f"无法启动：{exc}。可使用 --port 8766 更换端口。") from None
     analyst.start()
     print(f"\n  AI2B · 个人币圈分析师\n  http://127.0.0.1:{server.server_port}\n  {'演示模式 · 非真实行情' if args.demo else '真实行情 · 公共只读接口'}\n  Ctrl+C 停止\n", flush=True)
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
