@@ -14,7 +14,7 @@ cd ai2b
 python3.12 app.py
 ```
 
-打开 `http://127.0.0.1:8765`。如果 `python3` 已经是 3.10+，也可使用 `python3 app.py`。如端口占用，增加 `--port 8766`。
+本机打开 `http://127.0.0.1:8765`，其他设备使用 `http://服务器IP:8765`。默认监听 `0.0.0.0`（所有网卡），需允许对应端口通过服务器防火墙。如果 `python3` 已经是 3.10+，也可使用 `python3 app.py`。如端口占用，增加 `--port 8766`。
 
 体验合成数据：
 
@@ -40,7 +40,7 @@ docker compose logs -f --tail=100 ai2b
 
 原 Python 服务占用 8765 时，可以使用 `AI2B_PORT=8766 docker compose up -d --build`，然后访问 `http://127.0.0.1:8766`。也可在 `.env` 设置 `AI2B_PORT=8766`。
 
-Compose 默认仅发布本机端口，使用非 root 用户运行，包含健康检查、日志轮转和容器重启策略。设置、密钥、持仓和报告保存在 `ai2b_data` 命名卷中，重建容器后保留；它与本地 Python 的 `.data/` 是两份独立数据。`.env`、`.data/` 和 Git 历史均不进入镜像。
+Compose 默认将端口发布到 `0.0.0.0`，可通过 `http://服务器IP:8765` 或配置好的反向代理域名访问。使用非 root 用户运行，包含健康检查、日志轮转和容器重启策略。设置、密钥、持仓和报告保存在 `ai2b_data` 命名卷中，重建容器后保留；它与本地 Python 的 `.data/` 是两份独立数据。`.env`、`.data/` 和 Git 历史均不进入镜像。
 
 停止：`docker compose down`。更新代码后执行 `docker compose up -d --build`。**不要使用 `docker compose down -v`，除非确实要删除全部容器数据。**
 
@@ -103,7 +103,7 @@ Compose 默认仅发布本机端口，使用非 root 用户运行，包含健康
 
 也可以复制 `.env.example` 为 `.env`。服务只读取 `AI2B_` 开头的配置；已保存的网页连接配置优先于环境中的初始连接参数。环境密钥在本地未保存密钥时使用。`.env` 和 `.data/` 已加入 `.gitignore`。
 
-Python 默认仅监听 `127.0.0.1`；Docker 内部监听 `0.0.0.0`，宿主机发布端口仍限制在 `127.0.0.1`。无用户登录机制，供单人使用；远程服务器请通过 SSH 本地端口转发访问，不要直接公开到互联网。
+Python 和 Docker 默认监听 `0.0.0.0`，应用接受域名和 IP 访问。反向代理需保留浏览器访问的原始 `Host`（含非默认端口）；写入接口接受相同 Host 的 HTTP / HTTPS 来源。无用户登录机制，任何能访问服务的人都能修改配置和触发推送；公网部署可在反向代理层配置访问认证。本地 Python 仅需本机访问时，可加 `--host 127.0.0.1`。
 
 ## 验证
 
@@ -129,7 +129,7 @@ analyst/web.py         本地 HTTP 服务与 API
 static/               中文响应式看板
 tests/                离线标准库测试
 Dockerfile            Python 3.12 非 root 容器镜像
-compose.yaml          本机端口、持久卷、自动重启
+compose.yaml          端口发布、持久卷、自动重启
 docs/docker.md        Docker 运维和迁移说明
 ```
 

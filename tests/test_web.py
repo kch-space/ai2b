@@ -54,9 +54,14 @@ class WebTests(unittest.TestCase):
     def test_cross_origin_write_rejected(self):
         self.assertEqual(self.request("/api/settings", {}, {"Origin": "https://evil.example"})[0], 403)
 
-    def test_non_loopback_host_rejected(self):
-        self.assertEqual(self.request("/api/state", headers={"Host": "evil.example"})[0], 403)
-        self.assertEqual(self.request("/api/settings", {}, {"Host": "evil.example", "Origin": "http://evil.example"})[0], 403)
+    def test_domain_and_ip_access(self):
+        for host in ("ai2b.516253.xyz", "192.0.2.10:8765"):
+            with self.subTest(host=host):
+                self.assertEqual(self.request("/", headers={"Host": host})[0], 200)
+                self.assertEqual(self.request("/api/state", headers={"Host": host})[0], 200)
+                for scheme in ("http", "https"):
+                    self.assertEqual(self.request("/api/settings", {},
+                        {"Host": host, "Origin": f"{scheme}://{host}"})[0], 200)
 
     def test_loopback_hosts_allow_docker_mapped_ports(self):
         for host in ("127.0.0.1:18765", "localhost:18765", "localhost"):
@@ -65,11 +70,13 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.request("/api/settings", {},
             {"Host": "localhost:18765", "Origin": "http://localhost:18765"})[0], 200)
 
-    def test_malformed_and_disguised_hosts_rejected(self):
-        for host in ("localhost.evil.example", "127.0.0.1.evil.example", "user@localhost",
-                     "localhost/path", "localhost:bad", "localhost:70000", "localhost:0"):
-            with self.subTest(host=host):
-                self.assertEqual(self.request("/api/health", headers={"Host": host})[0], 403)
+    def test_domain_rejects_other_origins_even_with_forwarded_headers(self):
+        for origin in ("https://evil.example", "https://ai2b.516253.xyz.evil.example",
+                       "https://ai2b.516253.xyz:8443", "null"):
+            with self.subTest(origin=origin):
+                self.assertEqual(self.request("/api/settings", {},
+                    {"Host": "ai2b.516253.xyz", "Origin": origin,
+                     "X-Forwarded-Host": "evil.example", "X-Forwarded-Proto": "https"})[0], 403)
 
     def test_mapped_port_still_rejects_cross_origin(self):
         self.assertEqual(self.request("/api/settings", {},

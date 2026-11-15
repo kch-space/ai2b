@@ -6,7 +6,7 @@ services:
     init: true
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${AI2B_PORT:-8765}:8765"
+      - "0.0.0.0:${AI2B_PORT:-8765}:8765"
     environment:
       AI2B_LLM_BASE_URL: ${AI2B_LLM_BASE_URL:-}
       AI2B_LLM_MODEL: ${AI2B_LLM_MODEL:-}

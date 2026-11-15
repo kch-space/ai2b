@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
-import re
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -12,7 +11,7 @@ log = logging.getLogger("ai2b")
 STATIC = Path(__file__).resolve().parent.parent / "static"
 
 
-def make_server(service, host="127.0.0.1", port=8765):
+def make_server(service, host="0.0.0.0", port=8765):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
             # Do not log POST request bodies, API tokens, or upstream responses.
@@ -28,16 +27,7 @@ def make_server(service, host="127.0.0.1", port=8765):
             self.end_headers()
             self.wfile.write(payload)
 
-        def valid_host(self):
-            # Docker may map a different host port to the internal service port.
-            # Keep the loopback hostname restriction to prevent DNS rebinding.
-            match = re.fullmatch(r"(?:127\.0\.0\.1|localhost)(?::([0-9]{1,5}))?",
-                                 self.headers.get("Host", "").lower())
-            return bool(match and (match[1] is None or 1 <= int(match[1]) <= 65535))
-
         def do_GET(self):
-            if not self.valid_host():
-                return self.reply(403, {"error": "仅允许本机地址访问"})
             route = urllib.parse.urlsplit(self.path)
             query = urllib.parse.parse_qs(route.query)
             try:
@@ -73,11 +63,12 @@ def make_server(service, host="127.0.0.1", port=8765):
                 self.reply(502, {"error": str(exc)[:500] if isinstance(exc, RuntimeError) else "暂时无法获取数据，请稍后重试"})
 
         def do_POST(self):
-            if not self.valid_host():
-                return self.reply(403, {"error": "仅允许本机地址访问"})
             origin = self.headers.get("Origin")
-            expected = "http://" + self.headers.get("Host", "")
-            if origin and origin != expected:
+            # HTTPS may terminate at a reverse proxy. Require the browser's
+            # origin to match Host without relying on forwarded headers.
+            host = self.headers.get("Host", "")
+            expected = {"http://" + host, "https://" + host}
+            if origin and origin not in expected:
                 return self.reply(403, {"error": "来源校验失败"})
             if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                 return self.reply(415, {"error": "请使用 application/json"})
