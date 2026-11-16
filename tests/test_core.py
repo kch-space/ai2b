@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from analyst.analysis import allocation, atr, build_report, ema, indicators, rsi
 from analyst.integrations import Secrets, Telegram, enrich_report, report_text, valid_llm_url
-from analyst.market import INTERVALS, Market
+from analyst.market import INTERVALS, MARKET, Market
 from analyst.service import Analyst
 from analyst.storage import DEFAULT_SETTINGS, Store, number, symbol_name
 
@@ -51,14 +51,14 @@ class AllocationTests(unittest.TestCase):
 
     def test_position_occupancy_limits_new_capital(self):
         result = allocation(100, 98, DEFAULT_SETTINGS, occupied=6800)
-        self.assertEqual(result["amount"], 200)
+        self.assertEqual(result["margin_amount"], 200)
 
     def test_reserve_exhaustion_blocks_new_amount(self):
         self.assertEqual(allocation(100, 95, DEFAULT_SETTINGS, occupied=8000)["amount"], 0)
 
     def test_existing_same_asset_reduces_concentration_room(self):
         result = allocation(100, 99, DEFAULT_SETTINGS, occupied=1900, asset_occupied=1900)
-        self.assertEqual(result["amount"], 100)
+        self.assertEqual(result["margin_amount"], 100)
         self.assertEqual(allocation(100, 99, DEFAULT_SETTINGS, asset_occupied=2500)["amount"], 0)
 
     def test_disabled_signal_and_invalid_stop(self):
@@ -74,8 +74,8 @@ class AllocationTests(unittest.TestCase):
                 "reserve_pct": rng.uniform(0, 95), "round_trip_cost_bps": rng.uniform(0, 200)}
             entry = rng.uniform(1, 100000)
             result = allocation(entry, entry * rng.uniform(.5, .99), settings, occupied=rng.uniform(0, settings["capital"]))
-            self.assertLessEqual(result["amount"], result["leg_cap"] + 1e-8)
-            self.assertLessEqual(result["amount"], result["available"] + 1e-8)
+            self.assertLessEqual(result["margin_amount"], result["leg_cap"] + 1e-8)
+            self.assertLessEqual(result["margin_amount"], result["available"] + 1e-8)
             self.assertLessEqual(result["planned_loss"], result["risk_budget"] + 1e-8)
             self.assertGreaterEqual(result["amount"], 0)
 
@@ -106,16 +106,16 @@ class ReportTests(unittest.TestCase):
 
     def test_position_diagnosis_uses_mark_to_market(self):
         snapshot = fixture_snapshot()
-        price = snapshot["quote"]["price"]
+        price = snapshot["quote"]["mark_price"]
         report = build_report(snapshot, DEFAULT_SETTINGS,
-            [{"symbol": "BTCUSDT", "quantity": .1, "entry": price / 2}])
-        self.assertAlmostEqual(report["position"]["pnl_pct"], 100)
+            [{"symbol": "BTCUSDT", "quantity": .1, "entry": price / 2, "market": MARKET, "side": "long", "leverage": 2}])
+        self.assertAlmostEqual(report["position"]["pnl_pct"], 200)
         self.assertAlmostEqual(report["position"]["pnl"], price * .05)
-        self.assertAlmostEqual(report["allocation"]["occupied"], price * .1)
+        self.assertAlmostEqual(report["allocation"]["occupied"], price * .025)
 
     def test_other_position_without_fresh_mark_blocks_new_amount(self):
         snapshot = fixture_snapshot()
-        positions = [{"symbol": "ETHUSDT", "quantity": 1, "entry": 1000}]
+        positions = [{"symbol": "ETHUSDT", "quantity": 1, "entry": 1000, "market": MARKET, "side": "long", "leverage": 3}]
         for quotes in ({}, {"ETHUSDT": {"price": 2000, "timestamp": time.time() - 120, "demo": True}}):
             report = build_report(snapshot, DEFAULT_SETTINGS, positions, quotes)
             self.assertEqual(report["allocation"]["amount"], 0)
@@ -138,23 +138,23 @@ class MarketTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             market.candles("BTC")
 
-    def test_quote_fallback_to_okx(self):
+    def test_futures_failure_never_falls_back_to_spot_or_okx(self):
+        calls = []
         def fetch(url):
-            if "binance" in url:
-                raise OSError("unavailable")
-            return {"data": [{"instId": "BTC-USDT", "last": "100", "open24h": "80",
-                "high24h": "110", "low24h": "75", "volCcy24h": "10", "ts": str(time.time() * 1000)}]}
-        quote = Market(fetcher=fetch).quotes(["BTC"])["BTCUSDT"]
-        self.assertFalse(quote["demo"])
-        self.assertEqual(quote["change_pct"], 25)
-        self.assertIn("OKX", quote["source"])
+            calls.append(url)
+            raise OSError("unavailable")
+        with self.assertRaisesRegex(RuntimeError, "现货或其他交易所"):
+            Market(fetcher=fetch).quotes(["BTC"])
+        self.assertTrue(all(url.startswith("https://fapi.binance.com/") for url in calls))
 
     def test_unclosed_binance_candle_is_excluded(self):
         seconds = 14400
         end = int(time.time() // seconds) * seconds
         rows = [[(end - (70 - i) * seconds) * 1000, "100", "102", "99", "101", "1",
                  (end - (69 - i) * seconds) * 1000 - 1] for i in range(71)]
-        data = Market(fetcher=lambda url: rows).candles("BTC")
+        market = Market(fetcher=lambda url: rows)
+        market.cache["contracts"] = (time.time(), {"BTCUSDT"})
+        data = market.candles("BTC")
         self.assertEqual(len(data["bars"]), 70)
         self.assertTrue(all(b["time"] + seconds <= time.time() for b in data["bars"]))
 
@@ -255,20 +255,21 @@ class IntegrationTests(unittest.TestCase):
         allocation_before = copy.deepcopy(report["allocation"])
         self.secrets.update({"llm_api_key": "test-key"})
         response = {"summary": "市场处于观察阶段", "bull_case": "趋势偏上", "bear_case": "量能不足",
-                    "watch_next": "等待确认", "allocation": {"amount": 9999999}}
+                    "watch_next": "等待确认", "event_assessment": "未纳入热点", "event_refs": [], "allocation": {"amount": 9999999}}
         result = enrich_report(report, {"llm_base_url": "https://example.com/v1", "llm_model": "test"}, self.secrets,
             poster=lambda *a, **k: {"choices": [{"message": {"content": json.dumps(response)}}]})
         self.assertEqual(result["engine"], "ai")
         self.assertEqual(result["allocation"], allocation_before)
 
-    def test_ai_failure_keeps_rule_report_without_leaking_secrets(self):
+    def test_ai_failure_is_explicit_without_leaking_secrets(self):
         report = build_report(fixture_snapshot(), DEFAULT_SETTINGS)
         self.secrets.update({"llm_api_key": "private-key"})
         def fail(*a, **kw):
             raise RuntimeError("private-key")
-        result = enrich_report(report, {"llm_base_url": "https://example.com/v1", "llm_model": "test"}, self.secrets, poster=fail)
-        self.assertEqual(result["engine"], "rules")
-        self.assertNotIn("private-key", json.dumps(result))
+        with self.assertRaises(RuntimeError) as raised:
+            enrich_report(report, {"llm_base_url": "https://example.com/v1", "llm_model": "test"}, self.secrets, poster=fail)
+        self.assertEqual(report["engine"], "rules")
+        self.assertNotIn("private-key", str(raised.exception))
 
     def test_telegram_plain_text_and_demo_label(self):
         calls = []
@@ -301,7 +302,7 @@ class MonitorTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def quote(self, price=110, demo=False, age=0):
-        return {"BTCUSDT": {"price": price, "demo": demo, "timestamp": time.time() - age, "source": "test"}}
+        return {"BTCUSDT": {"price": price, "demo": demo, "timestamp": time.time() - age, "source": "test", "market": MARKET}}
 
     def test_stale_and_demo_quotes_never_fire_alerts(self):
         self.service.store.add_alert({"symbol": "BTC", "direction": "above", "price": 100})

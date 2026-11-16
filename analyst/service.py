@@ -2,24 +2,29 @@ from __future__ import annotations
 
 import copy
 import logging
+import hashlib
+import json
+import urllib.parse
 import threading
 import time
 import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from .analysis import build_report
+from .analysis import build_report, position_metrics
 from .integrations import Secrets, Telegram, enrich_report, valid_llm_url
-from .market import Market
+from .market import Market, MARKET
+from .news import News
 from .storage import Store, symbol_name
 
 log = logging.getLogger("ai2b")
 
 
 class Analyst:
-    def __init__(self, directory, demo=False, market=None):
+    def __init__(self, directory, demo=False, market=None, news=None):
         self.store = Store(directory)
         self.market = market or Market(demo=demo)
+        self.news = news or News()
         self.secrets = Secrets(directory)
         self.telegram = Telegram(self.store, self.secrets)
         self.lock = threading.RLock()
@@ -52,16 +57,12 @@ class Analyst:
             jobs = copy.deepcopy(list(self.jobs.values()))
             error = self.market_error
             last_poll = self.last_poll
-        positions = self.store.positions()
-        for p in positions:
-            quote = quotes.get(p["symbol"])
-            p["mark"] = quote["price"] if quote else None
-            p["pnl"] = (quote["price"] - p["entry"]) * p["quantity"] if quote else None
-            p["pnl_pct"] = (quote["price"] / p["entry"] - 1) * 100 if quote else None
+        positions = [position_metrics(p, quotes.get(p["symbol"])) for p in self.store.positions()]
         return {"watchlist": self.store.watchlist(), "quotes": quotes, "positions": positions,
             "alerts": self.store.alerts(), "reports": self.store.reports(), "jobs": jobs[-20:],
             "notifications": self.store.notifications(), "demo": self.market.demo,
             "market_error": error, "last_poll": last_poll, "started": self.started,
+            "market": MARKET, "plan_context": self.plan_context(),
             "monitor_running": bool(self.thread and self.thread.is_alive()), "settings": self.settings()}
 
     def settings(self):
@@ -69,12 +70,34 @@ class Analyst:
         result["has_llm_key"] = bool(self.secrets.get("llm_api_key"))
         result["has_telegram_token"] = bool(self.secrets.get("telegram_bot_token"))
         result["telegram_configured"] = self.telegram.configured
-        result["ai_configured"] = bool(result["llm_base_url"] and result["llm_model"])
+        local = urllib.parse.urlsplit(result["llm_base_url"]).hostname in ("localhost", "127.0.0.1", "::1")
+        result["ai_configured"] = bool(result["llm_base_url"] and result["llm_model"] and (local or result["has_llm_key"]))
         return result
+
+    def plan_context(self, settings=None, positions=None):
+        settings = settings or self.store.settings()
+        positions = self.store.positions() if positions is None else positions
+        keys = ("capital", "risk_pct", "allocation_pct", "reserve_pct", "round_trip_cost_bps", "horizon", "leverage")
+        payload = {"settings": {k: settings[k] for k in keys}, "positions": positions}
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
+
+    def analysis_mode(self, mode=None):
+        mode = mode or self.store.settings()["analysis_mode"]
+        if mode not in ("rules", "ai"):
+            raise ValueError("请选择规则分析或 AI 综合分析")
+        if mode == "ai" and not self.settings()["ai_configured"]:
+            raise ValueError("AI 综合分析需要先配置模型地址、模型名称和 API Key；规则分析可独立运行")
+        return mode
 
     def save_settings(self, patch):
         if patch.get("llm_base_url"):
             valid_llm_url(patch["llm_base_url"])
+        prospective = {**self.store.settings(), **patch}
+        if prospective.get("analysis_mode") == "ai":
+            local = urllib.parse.urlsplit(prospective.get("llm_base_url", "")).hostname in ("localhost", "127.0.0.1", "::1")
+            key = str(patch.get("llm_api_key") or self.secrets.get("llm_api_key")) if not patch.get("clear_llm_api_key") else ""
+            if not (prospective.get("llm_base_url") and prospective.get("llm_model") and (local or key)):
+                raise ValueError("默认 AI 分析需要完整模型配置；也可先选择技术规则分析")
         self.store.save_settings(patch)
         self.secrets.update(patch)
         self.wake_event.set()
@@ -105,8 +128,8 @@ class Analyst:
         try:
             with self.mode_lock:
                 watched = self.store.watchlist()
-                needed = list(dict.fromkeys(watched + [p["symbol"] for p in self.store.positions()]
-                    + [a["symbol"] for a in self.store.alerts() if a["active"]]))
+                needed = list(dict.fromkeys(watched + [p["symbol"] for p in self.store.positions() if p["market"] == MARKET]
+                    + [a["symbol"] for a in self.store.alerts() if a["active"] and a["market"] == MARKET]))
                 quotes = self.market.quotes(needed)
                 with self.lock:
                     self.quotes.update(quotes)
@@ -123,7 +146,8 @@ class Analyst:
     def check_alerts(self, quotes):
         for alert in self.store.alerts():
             q = quotes.get(alert["symbol"])
-            if not alert["active"] or not q or q["demo"] or time.time() - q["timestamp"] > 90:
+            if (not alert["active"] or alert["market"] != MARKET or not q or q.get("market") != MARKET
+                    or q["demo"] or time.time() - q["timestamp"] > 90):
                 continue
             hit = q["price"] >= alert["price"] if alert["direction"] == "above" else q["price"] <= alert["price"]
             if not hit or not self.store.fire_alert(alert["id"], q["price"]):
@@ -139,21 +163,30 @@ class Analyst:
                 except Exception as exc:
                     self.store.notify("error", "预警推送未确认送达", str(exc))
 
-    def analyze(self, symbol):
+    def analyze(self, symbol, mode=None):
+        mode = self.analysis_mode(mode)
         symbol = symbol_name(symbol)
         settings = self.store.settings()
         snapshot = self.market.snapshot(symbol, settings["horizon"])
         with self.lock:
             quotes = copy.deepcopy(self.quotes)
             self.quotes[symbol] = snapshot["quote"]
-        report = build_report(snapshot, settings, self.store.positions(), quotes)
-        report = enrich_report(report, settings, self.secrets)
+        positions = self.store.positions()
+        report = build_report(snapshot, settings, positions, quotes)
+        report["plan_context"] = self.plan_context(settings, positions)
+        report["news"] = self.news.headlines(symbol, demo=self.market.demo)
+        report["requested_mode"] = mode
+        if mode == "ai":
+            report = enrich_report(report, settings, self.secrets)
+        else:
+            report["warnings"].append("本报告由技术规则生成，未调用 AI；新闻列表仅供阅读，未参与规则信号与仓位计算")
         report["id"] = self.store.add_report(report)
         return report
 
-    def submit(self, kind, symbol=None):
+    def submit(self, kind, symbol=None, mode=None):
         if kind not in ("analysis", "briefing"):
             raise ValueError("未知任务")
+        mode = self.analysis_mode(mode)
         if symbol:
             symbol = symbol_name(symbol)
         if not self.worker_lock.acquire(blocking=False):
@@ -163,11 +196,11 @@ class Analyst:
             # Keep a bounded in-memory task history; saved reports are persistent.
             self.jobs = dict(list(self.jobs.items())[-19:])
             self.jobs[ident] = {"id": ident, "kind": kind, "symbol": symbol, "status": "running",
-                                "created": time.time(), "progress": "正在收集已收盘 K 线"}
-        threading.Thread(target=self._job, args=(ident, kind, symbol), daemon=True, name="ai2b-analysis").start()
+                                "created": time.time(), "mode": mode, "progress": "正在收集已收盘合约 K 线"}
+        threading.Thread(target=self._job, args=(ident, kind, symbol, mode), daemon=True, name="ai2b-analysis").start()
         return ident
 
-    def _job(self, ident, kind, symbol):
+    def _job(self, ident, kind, symbol, mode):
         try:
             symbols = [symbol] if kind == "analysis" else self.store.watchlist()
             if not symbols:
@@ -177,7 +210,7 @@ class Analyst:
                 with self.lock:
                     self.jobs[ident]["progress"] = f"正在分析 {target[:-4]}（{i + 1}/{len(symbols)}）"
                 try:
-                    report = self.analyze(target)
+                    report = self.analyze(target, mode)
                     reports.append(report)
                 except Exception as exc:
                     failures.append(f"{target}: {str(exc)[:200]}")

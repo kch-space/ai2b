@@ -84,6 +84,20 @@ docker compose run --rm --service-ports ai2b --demo
 
 按 `Ctrl+C` 退出，然后执行 `docker compose up -d` 恢复真实行情。演示报告有明确标识；价格预警与每日自动简报暂停。已启用的分析后自动推送仍可能发送带演示标识的报告，体验前可在网页关闭推送。
 
+## 从现货版升级到合约版
+
+升级前可按上文备份数据卷。启动后程序自动添加市场标记：旧现货持仓与历史报告保留，旧持仓不参与合约保证金测算；旧现货预警停用，防止在合约市场误触发。重新录入同币种合约持仓不会覆盖旧现货记录。
+
+默认账户权益假设仍为 10,000 USDT，计划杠杆 3 倍（1–20 可调），并非读取交易所账户。请核对设置后重新生成报告。默认规则分析不会调用模型；AI 分析需要配置模型并主动选择，模型失败会报错。
+
+运行时服务器需要连通 `fapi.binance.com` 和选用的模型/Telegram 服务。新闻读取 CoinDesk 与 Cointelegraph RSS；RSS 失败会标注热点缺失。合约接口若返回 HTTP 451 等地区/网络错误，页面会展示不可用，不用现货价格替代。可在服务器检查：
+
+```bash
+curl -f 'https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT'
+```
+
+应返回含 `markPrice`、`indexPrice`、`lastFundingRate` 和 `time` 的 JSON。仅容器健康检查通过并不代表币安数据可达。
+
 ## 更新与停止
 
 ```bash

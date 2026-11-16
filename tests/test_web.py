@@ -82,6 +82,18 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.request("/api/settings", {},
             {"Host": "localhost:18765", "Origin": "http://localhost:18766"})[0], 403)
 
+    def test_ai_request_without_configuration_is_rejected(self):
+        status, _, body = self.request("/api/analyze", {"symbol": "BTC", "mode": "ai"})
+        self.assertEqual(status, 400)
+        self.assertIn("配置", json.loads(body)["error"])
+
+    def test_news_demo_status_is_explicit(self):
+        status, _, body = self.request("/api/news?symbol=BTC")
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertEqual(result["status"], "demo")
+        self.assertEqual(result["items"], [])
+
     def test_plain_content_type_rejected(self):
         self.assertEqual(self.request("/api/settings", {}, {"Content-Type": "text/plain"})[0], 415)
 

@@ -34,7 +34,11 @@ def make_server(service, host="0.0.0.0", port=8765):
                 if route.path == "/api/state":
                     return self.reply(200, service.state())
                 if route.path == "/api/health":
-                    return self.reply(200, {"ok": True, "version": "0.1.0"})
+                    return self.reply(200, {"ok": True, "version": "0.2.0"})
+                if route.path == "/api/news":
+                    symbol = query.get("symbol", ["BTCUSDT"])[0]
+                    from .storage import symbol_name
+                    return self.reply(200, service.news.headlines(symbol_name(symbol), demo=service.market.demo))
                 if route.path == "/api/candles":
                     symbol = query.get("symbol", ["BTCUSDT"])[0]
                     interval = query.get("interval", ["4h"])[0]
@@ -104,9 +108,9 @@ def make_server(service, host="0.0.0.0", port=8765):
                 elif route == "/api/alerts/delete":
                     service.store.delete_alert(data.get("id"))
                 elif route == "/api/analyze":
-                    return self.reply(202, {"job_id": service.submit("analysis", data.get("symbol", "BTCUSDT"))})
+                    return self.reply(202, {"job_id": service.submit("analysis", data.get("symbol", "BTCUSDT"), data.get("mode"))})
                 elif route == "/api/briefing":
-                    return self.reply(202, {"job_id": service.submit("briefing")})
+                    return self.reply(202, {"job_id": service.submit("briefing", mode=data.get("mode"))})
                 elif route == "/api/telegram/test":
                     service.telegram.send("AI2B 已连接 ✓\n你的个人行情分析师已准备就绪。\n此消息用于验证 Telegram 推送配置。")
                 elif route == "/api/telegram/report":

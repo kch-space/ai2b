@@ -17,6 +17,8 @@ DEFAULT_SETTINGS = {
     "round_trip_cost_bps": 30.0,
     "horizon": "swing",
     "poll_seconds": 15,
+    "leverage": 3.0,
+    "analysis_mode": "rules",
     "telegram_enabled": False,
     "daily_report_enabled": False,
     "daily_report_time": "09:00",
@@ -72,6 +74,31 @@ class Store:
                     id INTEGER PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL,
                     message TEXT NOT NULL, created REAL NOT NULL, delivered INTEGER NOT NULL DEFAULT 0);
             """)
+            db.execute("BEGIN IMMEDIATE")
+            # Existing rows belong to the previous spot version. Preserve them
+            # with an explicit market tag rather than reinterpreting exposure.
+            columns = {r[1] for r in db.execute("PRAGMA table_info(positions)")}
+            for name, definition in (("side", "TEXT NOT NULL DEFAULT 'long'"),
+                                     ("leverage", "REAL NOT NULL DEFAULT 1"),
+                                     ("market", "TEXT NOT NULL DEFAULT 'spot'")):
+                if name not in columns:
+                    db.execute(f"ALTER TABLE positions ADD COLUMN {name} {definition}")
+            if not db.execute("SELECT 1 FROM config WHERE key='positions_market_v2'").fetchone():
+                db.execute("""CREATE TABLE positions_v2 (
+                    id INTEGER PRIMARY KEY, symbol TEXT NOT NULL, quantity REAL NOT NULL,
+                    entry REAL NOT NULL, created REAL NOT NULL, side TEXT NOT NULL,
+                    leverage REAL NOT NULL, market TEXT NOT NULL, UNIQUE(symbol,market))""")
+                db.execute("INSERT INTO positions_v2 SELECT id,symbol,quantity,entry,created,side,leverage,market FROM positions")
+                db.execute("DROP TABLE positions")
+                db.execute("ALTER TABLE positions_v2 RENAME TO positions")
+                db.execute("INSERT INTO config VALUES ('positions_market_v2','true')")
+            alert_columns = {r[1] for r in db.execute("PRAGMA table_info(alerts)")}
+            if "market" not in alert_columns:
+                db.execute("ALTER TABLE alerts ADD COLUMN market TEXT NOT NULL DEFAULT 'spot'")
+                db.execute("UPDATE alerts SET active=0 WHERE market='spot'")
+                if db.execute("SELECT 1 FROM alerts UNION ALL SELECT 1 FROM positions LIMIT 1").fetchone():
+                    db.execute("INSERT INTO notifications(kind,title,message,created) VALUES (?,?,?,?)",
+                               ("info", "已切换币安 USDT 永续合约", "旧现货持仓保留并排除合约测算；旧现货预警已停用，请按合约价位重新创建。", time.time()))
             if not db.execute("SELECT 1 FROM config WHERE key='initialized'").fetchone():
                 for symbol in ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"):
                     db.execute("INSERT OR IGNORE INTO watchlist VALUES (?,?)", (symbol, time.time()))
@@ -99,14 +126,20 @@ class Store:
     def save_settings(self, patch):
         settings = self.settings()
         bounds = {"capital": (1, 1e10), "risk_pct": (0.1, 5), "allocation_pct": (1, 100),
-                  "reserve_pct": (0, 95), "round_trip_cost_bps": (0, 500), "poll_seconds": (10, 300)}
+                  "reserve_pct": (0, 95), "leverage": (1, 20), "round_trip_cost_bps": (0, 500), "poll_seconds": (10, 300)}
         for key, limits in bounds.items():
             if key in patch:
                 settings[key] = number(patch[key], key, *limits)
+        if settings["leverage"] != int(settings["leverage"]):
+            raise ValueError("杠杆须为 1–20 的整数")
         if "horizon" in patch:
             if patch["horizon"] not in ("intraday", "swing", "position"):
                 raise ValueError("未知的观察周期")
             settings["horizon"] = patch["horizon"]
+        if "analysis_mode" in patch:
+            if patch["analysis_mode"] not in ("rules", "ai"):
+                raise ValueError("分析模式须为 rules 或 ai")
+            settings["analysis_mode"] = patch["analysis_mode"]
         for key in ("telegram_enabled", "daily_report_enabled"):
             if key in patch:
                 if not isinstance(patch[key], bool):
@@ -142,14 +175,21 @@ class Store:
 
     def save_position(self, data):
         symbol = symbol_name(data.get("symbol", ""))
+        side = data.get("side", "long")
+        if side not in ("long", "short"):
+            raise ValueError("持仓方向须为 long 或 short")
+        leverage = number(data.get("leverage", self.settings()["leverage"]), "杠杆", 1, 20)
+        if leverage != int(leverage):
+            raise ValueError("杠杆须为 1–20 的整数")
         quantity = number(data.get("quantity"), "持仓数量", 1e-12, 1e15)
         entry = number(data.get("entry"), "成本价", 1e-12, 1e12)
         if quantity * entry > 1e12:
             raise ValueError("持仓金额过大，请检查数量和成本价")
         with self.lock, self.connect() as db:
-            db.execute("""INSERT INTO positions(symbol,quantity,entry,created) VALUES (?,?,?,?)
-                ON CONFLICT(symbol) DO UPDATE SET quantity=excluded.quantity,entry=excluded.entry""",
-                       (symbol, quantity, entry, time.time()))
+            db.execute("""INSERT INTO positions(symbol,quantity,entry,created,side,leverage,market) VALUES (?,?,?,?,?,?,?)
+                ON CONFLICT(symbol,market) DO UPDATE SET quantity=excluded.quantity,entry=excluded.entry,
+                side=excluded.side,leverage=excluded.leverage,market=excluded.market""",
+                       (symbol, quantity, entry, time.time(), side, leverage, "binance_usdm"))
         return self.positions()
 
     def delete_position(self, ident):
@@ -187,8 +227,8 @@ class Store:
             raise ValueError("预警方向须为向上突破或向下跌破")
         price = number(data.get("price"), "预警价格", 1e-12, 1e12)
         with self.lock, self.connect() as db:
-            db.execute("INSERT INTO alerts(symbol,direction,price,created) VALUES (?,?,?,?)",
-                       (symbol, direction, price, time.time()))
+            db.execute("INSERT INTO alerts(symbol,direction,price,created,market) VALUES (?,?,?,?,?)",
+                       (symbol, direction, price, time.time(), "binance_usdm"))
 
     def delete_alert(self, ident):
         with self.lock, self.connect() as db:

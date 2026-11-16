@@ -1,6 +1,6 @@
 [project]
 name = "ai2b"
-version = "0.1.0"
+version = "0.2.0"
 description = "个人币圈分析师：行情分析、风险预算、自选盯盘与 Telegram 报告"
 requires-python = ">=3.10"
 dependencies = []

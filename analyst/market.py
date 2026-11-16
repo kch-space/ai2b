@@ -7,18 +7,21 @@ import random
 import threading
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 from .storage import symbol_name
 
 INTERVALS = {"15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
+MARKET = "binance_usdm"
+FAPI = "https://fapi.binance.com"
 BASES = {"BTCUSDT": 86420, "ETHUSDT": 2848, "SOLUSDT": 143.8, "BNBUSDT": 612.4,
          "DOGEUSDT": 0.168, "XRPUSDT": 1.98, "ADAUSDT": 0.42, "TRXUSDT": 0.28}
 
 
 def get_json(url, timeout=8):
-    req = urllib.request.Request(url, headers={"User-Agent": "AI2B/0.1", "Accept": "application/json"})
+    req = urllib.request.Request(url, headers={"User-Agent": "AI2B/0.2", "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as response:
         return json.loads(response.read(4_000_000))
 
@@ -36,71 +39,79 @@ class Market:
             self.cache.clear()
             self.quote_cache.clear()
 
+    def contracts(self):
+        with self.lock:
+            cached = self.cache.get("contracts")
+            if cached and time.time() - cached[0] < 3600:
+                return cached[1]
+        rows = self.fetch(FAPI + "/fapi/v1/exchangeInfo")["symbols"]
+        symbols = {r["symbol"] for r in rows if r.get("contractType") == "PERPETUAL"
+                   and r.get("status") == "TRADING" and r.get("quoteAsset") == "USDT"
+                   and r.get("marginAsset") == "USDT"}
+        if not symbols:
+            raise ValueError("没有可用的 USDT 永续合约")
+        with self.lock:
+            self.cache["contracts"] = (time.time(), symbols)
+        return symbols
+
     def quotes(self, symbols):
         symbols = list(dict.fromkeys(symbol_name(s) for s in symbols))
         if not symbols:
             return {}
         if self.demo:
             return {s: self._demo_quote(s) for s in symbols}
-        query = urllib.parse.urlencode({"symbols": json.dumps(symbols, separators=(",", ":"))})
         try:
-            rows = self.fetch("https://data-api.binance.vision/api/v3/ticker/24hr?" + query)
-            if isinstance(rows, dict):
-                rows = [rows]
+            supported = self.contracts()
+            unknown = [s for s in symbols if s not in supported]
+            if len(unknown) == len(symbols):
+                raise ValueError("不是正在交易的币安 USDT 永续合约：" + ", ".join(unknown))
+            # Same exchange and contract market for every price. Never fall back
+            # to spot, another exchange, or synthetic data.
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                tickers, premiums = list(pool.map(self.fetch, (
+                    FAPI + "/fapi/v1/ticker/24hr", FAPI + "/fapi/v1/premiumIndex")))
+            marks = {r["symbol"]: r for r in premiums}
             result = {}
-            for row in rows:
+            for row in tickers:
                 symbol = row.get("symbol")
-                if symbol not in symbols:
+                if symbol not in symbols or symbol not in supported or symbol not in marks:
                     continue
-                price = float(row["lastPrice"])
-                if price <= 0 or not math.isfinite(price):
-                    continue
-                result[symbol] = {"symbol": symbol, "price": price,
+                mark = marks[symbol]
+                quote = {"symbol": symbol, "market": MARKET, "price": float(row["lastPrice"]),
+                    "mark_price": float(mark["markPrice"]), "index_price": float(mark["indexPrice"]),
+                    "funding_rate": float(mark["lastFundingRate"]),
+                    "next_funding_time": float(mark["nextFundingTime"]) / 1000,
+                    "mark_timestamp": float(mark["time"]) / 1000,
                     "change_pct": float(row["priceChangePercent"]), "high": float(row["highPrice"]),
                     "low": float(row["lowPrice"]), "volume": float(row["quoteVolume"]),
-                    "timestamp": float(row["closeTime"]) / 1000, "source": "Binance 公共行情", "demo": False}
-            if result:
-                for quote in result.values():
-                    self._validate_quote(quote)
-                with self.lock:
-                    self.quote_cache.update(result)
-                return result
-        except Exception:
-            pass
-        # Independent public spot-data fallback. No account API keys required.
-        try:
-            payload = self.fetch("https://www.okx.com/api/v5/market/tickers?instType=SPOT")
-            result = {}
-            for row in payload.get("data", []):
-                symbol = row["instId"].replace("-", "")
-                if symbol not in symbols:
-                    continue
-                price, opening = float(row["last"]), float(row["open24h"])
-                if price <= 0 or not math.isfinite(price):
-                    continue
-                result[symbol] = {"symbol": symbol, "price": price,
-                    "change_pct": (price / opening - 1) * 100 if opening else 0,
-                    "high": float(row["high24h"]), "low": float(row["low24h"]),
-                    "volume": float(row.get("volCcy24h", 0)), "timestamp": float(row["ts"]) / 1000,
-                    "source": "OKX 公共行情", "demo": False}
-            if result:
-                for quote in result.values():
-                    self._validate_quote(quote)
-                with self.lock:
-                    self.quote_cache.update(result)
-                return result
-        except Exception:
-            pass
-        raise RuntimeError("公共行情源暂时不可达。请检查网络，或手动切换演示模式；系统不会用模拟价格替代真实行情。")
+                    "timestamp": float(row["closeTime"]) / 1000,
+                    "source": "Binance USDT 永续合约", "demo": False}
+                self._validate_quote(quote)
+                result[symbol] = quote
+            if not result:
+                raise ValueError("没有可用的合约报价")
+            with self.lock:
+                self.quote_cache.update(result)
+            return result
+        except Exception as exc:
+            reason = f"HTTP {exc.code}" if isinstance(exc, urllib.error.HTTPError) else type(exc).__name__
+            raise RuntimeError("币安合约行情不可用（" + reason +
+                "）。请检查服务器到 fapi.binance.com 的连通性和地区限制；不会用模拟价格、现货或其他交易所替代。") from exc
 
     @staticmethod
     def _validate_quote(quote):
-        if any(not math.isfinite(quote[k]) for k in ("price", "change_pct", "high", "low", "volume", "timestamp")):
+        fields = ("price", "change_pct", "high", "low", "volume", "timestamp",
+                  "mark_price", "index_price", "funding_rate", "next_funding_time", "mark_timestamp")
+        if any(not math.isfinite(quote[k]) for k in fields):
             raise ValueError("报价包含无效数值")
-        if quote["price"] <= 0 or quote["low"] <= 0 or quote["high"] < quote["low"] or quote["volume"] < 0:
+        if (min(quote["price"], quote["low"], quote["mark_price"], quote["index_price"]) <= 0
+                or quote["high"] < quote["low"] or quote["volume"] < 0):
             raise ValueError("报价价格关系异常")
-        if not 0 < quote["timestamp"] <= time.time() + 60:
+        now = time.time()
+        if any(not 0 < quote[k] <= now + 60 for k in ("timestamp", "mark_timestamp")):
             raise ValueError("报价时间异常")
+        if quote["next_funding_time"] <= 0:
+            raise ValueError("资金费结算时间无效")
 
     def candles(self, symbol, interval="4h", limit=160):
         symbol = symbol_name(symbol)
@@ -112,38 +123,48 @@ class Market:
             if cached and time.time() - cached[0] < 60:
                 return cached[1]
         if self.demo:
-            bars = self._demo_bars(symbol, interval, limit)
-            result = {"bars": bars, "source": "演示数据", "demo": True, "interval": interval}
+            result = {"bars": self._demo_bars(symbol, interval, limit), "source": "合约演示数据",
+                      "demo": True, "interval": interval, "market": MARKET}
         else:
-            errors = []
-            result = None
-            query = urllib.parse.urlencode({"symbol": symbol, "interval": interval, "limit": limit + 1})
             try:
-                rows = self.fetch("https://data-api.binance.vision/api/v3/klines?" + query)
+                if symbol not in self.contracts():
+                    raise ValueError("该交易对不是正在交易的 USDT 永续合约")
+                query = urllib.parse.urlencode({"symbol": symbol, "interval": interval, "limit": limit + 1})
+                rows = self.fetch(FAPI + "/fapi/v1/klines?" + query)
                 bars = [{"time": int(r[0]) / 1000, "open": float(r[1]), "high": float(r[2]),
                          "low": float(r[3]), "close": float(r[4]), "volume": float(r[5])}
                         for r in rows if float(r[6]) / 1000 <= time.time()]
-                result = {"bars": bars[-limit:], "source": "Binance 公共行情", "demo": False, "interval": interval}
+                result = {"bars": bars[-limit:], "source": "Binance USDT 永续合约 · 成交价 K 线",
+                          "demo": False, "interval": interval, "market": MARKET}
             except Exception as exc:
-                errors.append(type(exc).__name__)
-            if result is None:
-                query = urllib.parse.urlencode({"instId": symbol[:-4] + "-USDT",
-                    "bar": {"15m": "15m", "1h": "1H", "4h": "4H", "1d": "1Dutc"}[interval], "limit": limit + 1})
-                try:
-                    rows = self.fetch("https://www.okx.com/api/v5/market/candles?" + query)["data"]
-                    bars = [{"time": int(r[0]) / 1000, "open": float(r[1]), "high": float(r[2]),
-                             "low": float(r[3]), "close": float(r[4]), "volume": float(r[5])}
-                            for r in rows if str(r[8]) == "1"]
-                    result = {"bars": sorted(bars, key=lambda b: b["time"])[-limit:],
-                              "source": "OKX 公共行情", "demo": False, "interval": interval}
-                except Exception as exc:
-                    errors.append(type(exc).__name__)
-            if result is None:
-                raise RuntimeError(f"{symbol} 的 K 线暂不可用（{' / '.join(errors)}），请稍后重试")
+                reason = f"HTTP {exc.code}" if isinstance(exc, urllib.error.HTTPError) else type(exc).__name__
+                raise RuntimeError(f"{symbol} 币安合约 K 线不可用（{reason}），请检查网络与地区限制") from exc
         self._validate_bars(result["bars"])
         with self.lock:
             self.cache[key] = (time.time(), result)
         return result
+
+    def derivatives(self, symbol):
+        if self.demo:
+            return {"open_interest": 12345.0, "timestamp": time.time(), "demo": True,
+                    "source": "合约演示数据", "error": None}
+        key = ("open_interest", symbol)
+        with self.lock:
+            cached = self.cache.get(key)
+            if cached and time.time() - cached[0] < 30:
+                return cached[1]
+        try:
+            row = self.fetch(FAPI + "/fapi/v1/openInterest?" + urllib.parse.urlencode({"symbol": symbol}))
+            value, stamp = float(row["openInterest"]), float(row["time"]) / 1000
+            if not math.isfinite(value) or value < 0 or not math.isfinite(stamp) or not 0 <= time.time() - stamp <= 90:
+                raise ValueError("持仓量无效或过期")
+            result = {"open_interest": value, "timestamp": stamp, "source": "Binance USDT 永续合约",
+                      "demo": False, "error": None}
+            with self.lock:
+                self.cache[key] = (time.time(), result)
+            return result
+        except Exception:
+            return {"open_interest": None, "timestamp": None, "error": "持仓量暂不可用，不据此判断资金流向"}
 
     @staticmethod
     def _validate_bars(bars):
@@ -169,7 +190,8 @@ class Market:
         quote = self.quotes([symbol]).get(symbol)
         if not quote:
             raise ValueError("该币种没有可用的实时价格")
-        return {"symbol": symbol, "quote": quote, "series": series, "created": time.time()}
+        return {"symbol": symbol, "quote": quote, "series": series, "created": time.time(),
+                "market": MARKET, "derivatives": self.derivatives(symbol)}
 
     def _demo_bars(self, symbol, interval, limit):
         seconds = INTERVALS[interval]
@@ -196,4 +218,7 @@ class Market:
         return {"symbol": symbol, "price": price, "change_pct": (price / bars[-25]["close"] - 1) * 100,
                 "high": max(b["high"] for b in bars[-24:]), "low": min(b["low"] for b in bars[-24:]),
                 "volume": sum(b["volume"] * b["close"] for b in bars[-24:]),
-                "timestamp": time.time(), "source": "演示数据 · 非真实行情", "demo": True}
+                "timestamp": time.time(), "source": "合约演示数据 · 非真实行情", "demo": True,
+                "market": MARKET, "mark_price": price * 1.0001, "index_price": price * .9999,
+                "mark_timestamp": time.time(), "funding_rate": .0001,
+                "next_funding_time": (int(time.time() // 28800) + 1) * 28800}
