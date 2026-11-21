@@ -12,10 +12,11 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from .analysis import build_report, position_metrics
-from .integrations import Secrets, Telegram, enrich_report, valid_llm_url
+from .integrations import Secrets, Telegram, answer_question, enrich_report, valid_llm_url
 from .market import Market, MARKET
 from .news import News
 from .storage import Store, symbol_name
+from .telegram_bot import TelegramBot
 
 log = logging.getLogger("ai2b")
 
@@ -40,16 +41,19 @@ class Analyst:
         self.poll_lock = threading.Lock()
         self.thread = None
         self.last_daily_attempt = 0
+        self.telegram_bot = TelegramBot(self)
 
     def start(self):
         self.thread = threading.Thread(target=self._loop, name="ai2b-monitor", daemon=True)
         self.thread.start()
+        self.telegram_bot.start()
 
     def close(self):
         self.stop_event.set()
         self.wake_event.set()
         if self.thread:
             self.thread.join(timeout=3)
+        self.telegram_bot.close()
 
     def state(self):
         with self.lock:
@@ -112,6 +116,7 @@ class Analyst:
             with self.mode_lock, self.lock:
                 self.market.demo = demo
                 self.market.clear()
+                self.telegram_bot.clear_monitor()
                 self.quotes.clear()
                 self.market_error = ""
                 self.last_poll = None
@@ -137,6 +142,7 @@ class Analyst:
                     missing = [s for s in needed if s not in quotes]
                     self.market_error = f"部分币种没有报价：{', '.join(missing)}" if missing else ""
             self.check_alerts(quotes)
+            self.telegram_bot.monitor_tick(quotes)
         except Exception as exc:
             with self.lock:
                 self.market_error = str(exc)[:400]
@@ -268,3 +274,33 @@ class Analyst:
                 log.exception("Daily report scheduling failed")
             self.wake_event.wait(self.store.settings()["poll_seconds"])
             self.wake_event.clear()
+
+    def telegram_reports(self, symbols):
+        if not self.worker_lock.acquire(blocking=False):
+            raise ValueError("分析正在进行，请稍后重试")
+        try:
+            return self._telegram_reports(symbols)
+        finally:
+            self.worker_lock.release()
+
+    def _telegram_reports(self, symbols):
+        reports = []
+        for symbol in symbols:
+            report = self.analyze(symbol, mode="rules")
+            if report["stale"] and not report["demo"]:
+                raise ValueError("最新合约行情过期或缺失，暂不生成 Telegram 分析")
+            reports.append(report)
+        return reports
+
+    def telegram_answer(self, symbols, question, history):
+        if not self.settings()["ai_configured"]:
+            raise ValueError("请配置模型地址、名称和 API Key；/analyze 可查看规则报告")
+        if not self.worker_lock.acquire(blocking=False):
+            raise ValueError("分析正在进行，请稍后重试")
+        try:
+            reports = self._telegram_reports(symbols)
+            settings = self.store.settings()
+            self.store.claim_telegram_ai_call(settings["telegram_daily_ai_calls"])
+            return answer_question(reports, question, history, settings, self.secrets)
+        finally:
+            self.worker_lock.release()

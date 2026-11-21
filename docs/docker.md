@@ -109,3 +109,7 @@ docker compose ps
 容器收到停止信号后会关闭服务，Compose 最多等待 15 秒。`restart: unless-stopped` 用于异常退出和 Docker 引擎重启后的恢复；手动停止后需手动启动。电脑休眠或 Docker 引擎停止期间无法持续盯盘。
 
 容器内的 `localhost` 指向容器自身。连接宿主机的模型时，Docker Desktop 可以通过 `host.docker.internal` 访问；当前模型接口对非回环地址要求 HTTPS，因此该地址需要 HTTPS 模型端点。公共 HTTPS 模型服务可直接使用。后续如需连接同一 Docker 网络的 HTTP 模型，应单独增加明确的受信模型地址配置。
+
+## 只运行 Telegram
+
+使用 `docker compose -f compose.telegram.yaml up -d --build`，不发布网页端口。配置和切换方式见 [Telegram 说明](telegram.md)。

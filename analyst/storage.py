@@ -25,6 +25,14 @@ DEFAULT_SETTINGS = {
     "telegram_chat_id": "",
     "llm_base_url": "",
     "llm_model": "",
+    "telegram_chat_enabled": False,
+    "telegram_allowed_user_ids": [],
+    "monitor_enabled": False,
+    "monitor_window_minutes": 15.0,
+    "monitor_change_pct": 2.0,
+    "monitor_cooldown_minutes": 30.0,
+    "monitor_report_minutes": 240.0,
+    "telegram_daily_ai_calls": 50.0,
 }
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,15}USDT$")
 
@@ -126,7 +134,10 @@ class Store:
     def save_settings(self, patch):
         settings = self.settings()
         bounds = {"capital": (1, 1e10), "risk_pct": (0.1, 5), "allocation_pct": (1, 100),
-                  "reserve_pct": (0, 95), "leverage": (1, 20), "round_trip_cost_bps": (0, 500), "poll_seconds": (10, 300)}
+                  "reserve_pct": (0, 95), "leverage": (1, 20), "round_trip_cost_bps": (0, 500), "poll_seconds": (10, 300),
+                  "monitor_window_minutes": (1, 1440), "monitor_change_pct": (0.1, 100),
+                  "monitor_cooldown_minutes": (1, 1440), "monitor_report_minutes": (0, 10080),
+                  "telegram_daily_ai_calls": (1, 1000)}
         for key, limits in bounds.items():
             if key in patch:
                 settings[key] = number(patch[key], key, *limits)
@@ -140,7 +151,7 @@ class Store:
             if patch["analysis_mode"] not in ("rules", "ai"):
                 raise ValueError("分析模式须为 rules 或 ai")
             settings["analysis_mode"] = patch["analysis_mode"]
-        for key in ("telegram_enabled", "daily_report_enabled"):
+        for key in ("telegram_enabled", "daily_report_enabled", "telegram_chat_enabled", "monitor_enabled"):
             if key in patch:
                 if not isinstance(patch[key], bool):
                     raise ValueError(f"{key}须为布尔值")
@@ -150,6 +161,22 @@ class Store:
                 settings[key] = str(patch[key]).strip()[:500]
         if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", settings["daily_report_time"]):
             raise ValueError("推送时间须为 HH:MM，例如 09:00")
+        if "telegram_allowed_user_ids" in patch:
+            values = patch["telegram_allowed_user_ids"]
+            if (not isinstance(values, list) or any(isinstance(v, bool) or not isinstance(v, int)
+                                                   or v <= 0 for v in values)):
+                raise ValueError("Telegram 用户白名单须为正整数 ID 数组")
+            settings["telegram_allowed_user_ids"] = list(dict.fromkeys(values))
+        if settings["telegram_daily_ai_calls"] != int(settings["telegram_daily_ai_calls"]):
+            raise ValueError("Telegram 日调用上限必须为整数")
+        if settings["monitor_window_minutes"] * 60 < settings["poll_seconds"] * 2:
+            raise ValueError("异动窗口至少为行情轮询间隔的两倍")
+        if settings["telegram_chat_enabled"]:
+            chat = settings["telegram_chat_id"]
+            if not re.fullmatch(r"-?[1-9]\d*", chat):
+                raise ValueError("Telegram 对话需要数字 Chat ID")
+            if int(chat) < 0 and not settings["telegram_allowed_user_ids"]:
+                raise ValueError("群聊对话必须配置允许操作的 Telegram 用户 ID")
         self.set("settings", settings)
         return settings
 
@@ -160,7 +187,8 @@ class Store:
     def add_symbol(self, symbol):
         symbol = symbol_name(symbol)
         with self.lock, self.connect() as db:
-            if db.execute("SELECT COUNT(*) FROM watchlist").fetchone()[0] >= 20:
+            if (db.execute("SELECT COUNT(*) FROM watchlist").fetchone()[0] >= 20
+                    and not db.execute("SELECT 1 FROM watchlist WHERE symbol=?", (symbol,)).fetchone()):
                 raise ValueError("第一版最多关注 20 个币种")
             db.execute("INSERT OR IGNORE INTO watchlist VALUES (?,?)", (symbol, time.time()))
         return symbol
@@ -254,3 +282,19 @@ class Store:
     def notifications(self):
         with self.connect() as db:
             return [dict(r) for r in db.execute("SELECT * FROM notifications ORDER BY id DESC LIMIT 30")]
+
+    def conversation(self, chat_id, user_id):
+        return self.get(f"conversation:{chat_id}:{user_id}", {"symbols": [], "messages": []})
+
+    def save_conversation(self, chat_id, user_id, symbols, messages):
+        self.set(f"conversation:{chat_id}:{user_id}", {"symbols": symbols, "messages": messages[-8:]})
+
+    def claim_telegram_ai_call(self, limit):
+        # Persist before dispatch; failed requests also count toward the daily cap.
+        day = time.strftime("%Y-%m-%d", time.gmtime())
+        with self.lock:
+            budget = self.get("telegram_ai_calls", {})
+            count = budget.get("count", 0) if budget.get("day") == day else 0
+            if count >= int(limit):
+                raise ValueError("今天的 Telegram AI 调用次数已达上限，/price 与 /analyze 规则分析仍可使用")
+            self.set("telegram_ai_calls", {"day": day, "count": count + 1})

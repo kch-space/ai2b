@@ -9,9 +9,38 @@ import sys
 import tempfile
 import unittest
 import urllib.request
+from unittest.mock import patch
 
 
 class AppTests(unittest.TestCase):
+    def test_telegram_only_runs_without_http_and_stops(self):
+        from analyst.storage import Store
+        with tempfile.TemporaryDirectory() as data:
+            store = Store(data)
+            store.save_settings({"telegram_chat_id": "123"})
+            env = {"AI2B_TELEGRAM_BOT_TOKEN": "123:fake"}
+            import os
+            with patch.dict(os.environ, env):
+                process = subprocess.Popen(
+                    [sys.executable, str(Path(__file__).resolve().parent.parent / "app.py"),
+                     "--demo", "--telegram-only", "--data-dir", data],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            try:
+                for line in process.stdout:
+                    if "无网页" in line:
+                        break
+                else:
+                    self.fail("Telegram 模式未启动")
+                process.send_signal(signal.SIGTERM)
+                output, _ = process.communicate(timeout=10)
+                self.assertEqual(process.returncode, 0, output)
+                self.assertNotIn("http://127.0.0.1:", output)
+                self.assertIn("AI2B 正在停止", output)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate(timeout=5)
+
     def test_default_bind_and_sigterm_shutdown(self):
         with tempfile.TemporaryDirectory() as data:
             process = subprocess.Popen(

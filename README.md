@@ -1,6 +1,24 @@
 # AI2B · 个人币圈分析师
 
-一个面向币安 USDT 永续合约的中文行情工作台，围绕四件事：**分析、投入建议、自选币持续盯盘、Telegram 报告推送**。
+面向币安 USDT 永续合约的个人行情分析助手：**指定币种盯盘、异动推送、新闻与行情分析、Telegram 对话追问**。可以只运行电报服务，图表直接看交易所；也保留原有网页工作台与资金风险测算功能。
+
+## 只用 Telegram
+
+复制 `.env.example` 为 `.env`，填写 `AI2B_TELEGRAM_BOT_TOKEN`、数字 `AI2B_TELEGRAM_CHAT_ID` 及模型参数后：
+
+```bash
+python3 app.py --telegram-only
+```
+
+或使用不发布网页端口的 Docker 配置：
+
+```bash
+docker compose -f compose.telegram.yaml up -d --build
+```
+
+在电报使用 `/watch BTC ETH`、`/price BTC`、`/analyze BTC`；直接说“分析一下 BTC”，然后追问“关键支撑在哪里？”，AI 会重新读取行情并结合已取得的新闻分析。默认监控约15分钟涨跌达到2%的异动，每币种冷却30分钟，每四小时生成一次分析。模型未配置时自动报告使用规则分析，AI 对话会明确提示需要配置。
+
+[完整 Telegram 配置与使用说明](docs/telegram.md)。
 
 当前版本提供币安 USDT 永续行情、多空条件计划与保证金测算。技术规则分析可独立运行；AI 综合分析须配置模型，结合本次合约快照与已取得的新闻摘要进行解读。所有操作均为行情读取、报告生成和通知，不包含交易所下单接口。
 
