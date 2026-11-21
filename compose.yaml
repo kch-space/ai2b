@@ -5,7 +5,6 @@ services:
     image: ai2b:local
     init: true
     restart: unless-stopped
-    command: ["--telegram-only"]
     environment:
       AI2B_LLM_BASE_URL: ${AI2B_LLM_BASE_URL:-}
       AI2B_LLM_MODEL: ${AI2B_LLM_MODEL:-}
@@ -25,8 +24,6 @@ services:
       - /tmp:size=16m,mode=1777
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    healthcheck:
-      disable: true
     stop_grace_period: 15s
     logging:
       driver: json-file

@@ -16,14 +16,8 @@ RUN apt-get update \
 
 COPY app.py ./app.py
 COPY analyst/ ./analyst/
-COPY static/ ./static/
 
 USER 10001:10001
 
-EXPOSE 8765
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["python", "-c", "import json, urllib.request; r = urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=3); assert json.load(r)['ok']"]
-
-ENTRYPOINT ["python", "app.py", "--host", "0.0.0.0", "--data-dir", "/data"]
-CMD ["--port", "8765"]
+ENTRYPOINT ["python", "app.py", "--data-dir", "/data"]
+CMD ["--non-interactive"]

@@ -1,38 +1,46 @@
 # Docker 部署与维护
 
-## 启动
+## 首次启动配置
 
-项目只保留一份 `compose.yaml`，默认运行 Telegram 行情助手。安装 Git、Docker 和 Docker Compose 后：
+安装 Git、Docker 和 Docker Compose 后，在终端配置一次，再启动后台服务：
 
 ```bash
 git clone https://github.com/kch-space/ai2b.git
 cd ai2b
-cp .env.example .env
-# 编辑 .env，填写 Telegram Token、数字 Chat ID 和模型参数
-docker compose up -d --build
-docker compose ps
+docker compose build
+docker compose run --rm ai2b --configure
+docker compose up -d
 docker compose logs -f --tail=100 ai2b
 ```
 
-已有 `.env` 时直接修改原文件。模型参数为空时仍可生成规则报告，AI 对话需要完整模型配置。群聊必须设置允许操作的用户 ID；详细参数和命令见 [Telegram 说明](telegram.md)。
+交互命令需要实际终端；不要加 `-T`，不要通过日志面板填写密钥。配置向导隐藏 Token/API Key 输入，保存参数到数据卷后退出。后台服务使用 `--non-interactive` 读取同一卷的配置。模型可以暂不配置，自动分析使用规则报告；AI 对话需要完整模型连接。
 
-服务不发布网页端口，不需要设置服务器入站端口或反向代理。运行机器需要能够访问 `fapi.binance.com`、Telegram、新闻 RSS 和所选模型服务。同一个 Bot Token 只运行一个长轮询实例；使用过 webhook 的机器人需先移除 webhook。
+配置过程不调用外部服务。启动后在电报用 `/price BTC`、`/ask BTC 行情怎么看？` 核对行情和模型连接。参数和命令见 [Telegram 说明](telegram.md)。
 
-Compose 使用非 root 用户、只读程序目录、日志轮转与 `restart: unless-stopped`。只有 `/data` 数据卷和 `/tmp` 临时目录可写。HTTP 健康检查已关闭，因为默认不启动 HTTP 服务。`docker compose ps` 显示运行不代表外部数据可达，请在电报用 `/price BTC`、`/ask BTC 行情怎么看？` 核对行情和模型连接。
+项目只有一个 `compose.yaml`。容器使用非 root 用户、只读程序目录、日志轮转与自动重启；只有 `/data` 卷和 `/tmp` 可写。没有 HTTP 服务器、端口映射或 HTTP 健康检查，无需设置入站端口或反向代理。运行机器需要连通币安、Telegram、新闻 RSS 和模型服务。
 
-## 更新与停止
+## 修改配置与更新
+
+修改 Token、Chat ID、模型、白名单或监测规则时，先停止后台实例：
+
+```bash
+docker compose stop ai2b
+docker compose run --rm ai2b --configure
+docker compose up -d
+```
+
+升级代码：
 
 ```bash
 git pull --ff-only
 docker compose up -d --build
-docker compose ps
 ```
 
-旧版网页容器在原项目目录执行同一命令，会重建为 Telegram 模式并继续使用原 `ai2b_data` 卷，无需另一份 Compose 文件。之前用单独 Telegram Compose 文件启动的容器，也可直接用上述命令更新。
+原数据卷继续使用；已有有效 Telegram 配置可直接启动。需要重新核对时按上方修改配置命令运行向导。同一个 Bot Token 只能运行一个长轮询实例，不要一边运行后台服务一边另起分析进程。配置命令只保存设置，不启动轮询。
 
-停止使用 `docker compose down`，再次启动使用 `docker compose up -d`。容器收到停止信号后会关闭服务，Compose 最多等待 15 秒。手动停止后需手动启动；电脑休眠或 Docker 引擎停止期间无法监控行情。
+停止使用 `docker compose down`，再次启动用 `docker compose up -d`。手动停止后需手动启动；机器休眠或 Docker 停止期间无法监控行情。
 
-首次启动将 `.env` 中列出的参数作为默认值保存。已有保存设置优先于环境默认值；改模型连接时可停止服务后更新数据卷中的保存设置，监测阈值直接用电报 `/monitor` 修改。更新环境变量后执行 `docker compose up -d` 重建容器，`docker compose restart` 不更新环境变量。Token 和 API Key 由服务读取，不进入镜像。
+`.env` 可以作为无人值守的首次初始化方式，复制 `.env.example` 并填写参数即可。已有保存设置和密钥优先；更改连接推荐使用配置向导。环境变更用 `docker compose up -d` 重建容器，`restart` 不更新环境变量。缺少有效配置时后台进程退出，日志会提示交互配置命令。
 
 ## 数据保留与备份
 
@@ -69,7 +77,7 @@ docker compose up -d
 
 ```bash
 docker compose stop ai2b
-docker compose run --rm ai2b --telegram-only --demo
+docker compose run --rm ai2b --non-interactive --demo
 ```
 
 按 Ctrl+C 退出，执行 `docker compose up -d` 恢复真实行情。演示模式暂停自动行情推送，手动查询和对话带演示标识。
@@ -84,4 +92,4 @@ curl -f 'https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT'
 
 容器内 `localhost` 指向容器自身。连接宿主机模型时，Docker Desktop 可使用 `host.docker.internal`；当前模型接口对非回环地址要求 HTTPS，因此该地址也需要 HTTPS 模型端点。
 
-如果偶尔需要本地网页，直接运行 `python3 app.py`，默认端口 8765。Docker 的默认入口继续使用电报。
+本地直接运行 `python3 app.py` 使用终端配置并启动电报助手，不运行网络服务器。

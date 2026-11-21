@@ -131,7 +131,7 @@ class Store:
         result.update(self.get("settings", {}))
         return result
 
-    def save_settings(self, patch):
+    def validate_settings(self, patch):
         settings = self.settings()
         bounds = {"capital": (1, 1e10), "risk_pct": (0.1, 5), "allocation_pct": (1, 100),
                   "reserve_pct": (0, 95), "leverage": (1, 20), "round_trip_cost_bps": (0, 500), "poll_seconds": (10, 300),
@@ -177,8 +177,20 @@ class Store:
                 raise ValueError("Telegram 对话需要数字 Chat ID")
             if int(chat) < 0 and not settings["telegram_allowed_user_ids"]:
                 raise ValueError("群聊对话必须配置允许操作的 Telegram 用户 ID")
+        return settings
+
+    def save_settings(self, patch):
+        settings = self.validate_settings(patch)
         self.set("settings", settings)
         return settings
+
+    def replace_watchlist(self, symbols):
+        symbols = list(dict.fromkeys(symbol_name(s) for s in symbols))
+        if len(symbols) > 20:
+            raise ValueError("最多关注20个币种")
+        with self.lock, self.connect() as db:
+            db.execute("DELETE FROM watchlist")
+            db.executemany("INSERT INTO watchlist VALUES (?,?)", [(s, time.time()) for s in symbols])
 
     def watchlist(self):
         with self.connect() as db:

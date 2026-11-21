@@ -4,23 +4,30 @@
 
 ## 配置与启动
 
-1. 用 Telegram 官方 BotFather 创建机器人，取得 Token，并先向自己的机器人发送 `/start`。
-2. 将 `.env.example` 复制为 `.env`。填写 `AI2B_TELEGRAM_BOT_TOKEN` 和数字 `AI2B_TELEGRAM_CHAT_ID`。Chat ID 可在自己 Bot API 的 `getUpdates` 响应中查看 `message.chat.id`。群聊 ID 为负数，需配置 `AI2B_TELEGRAM_ALLOWED_USER_IDS=允许操作的用户数字ID`。
-3. AI 对话需要 `AI2B_LLM_BASE_URL`、`AI2B_LLM_MODEL`、`AI2B_LLM_API_KEY`，使用 OpenAI 兼容聊天接口。模型地址应包含 API 基础路径，例如 `https://api.openai.com/v1`。本机回环地址支持 HTTP，其余服务要求 HTTPS。
-4. 启动 `python3 app.py --telegram-only`。该模式不创建 HTTP 服务器，启用行情监控、Telegram 对话与推送。按 Ctrl+C 停止。进程持续运行才会监控行情。
+运行 `python3 app.py`。首次启动进入配置向导；已有配置时询问是否修改，回车继续运行。需要单独配置时用 `python3 app.py --configure`，配置完成后退出；后台或进程管理服务用 `--non-interactive`，复用保存配置并直接运行。
 
-纯 Telegram 的 Docker 启动：
+向导依次配置：
+
+1. **Telegram**：从官方 BotFather 创建机器人获得 Token，先向自己的机器人发送 `/start`。Chat ID 使用数字，群聊为负数。自己的 Bot API `getUpdates` 响应中可查看 `message.chat.id`。群聊必须填写允许操作的用户数字 ID；多个 ID 用逗号分隔。
+2. **模型**：可以暂不启用 AI。启用时填写 OpenAI 兼容 API 基础地址、模型名称和 API Key。地址包含基础路径，例如 `https://api.openai.com/v1`；本机回环支持 HTTP，其余要求 HTTPS。本地模型可不填 API Key。
+3. **关注与分析**：关注币种、intraday/swing/position 周期、行情轮询、异动窗口、涨跌阈值、推送冷却、定时报告间隔、每天 Telegram AI 调用上限。
+4. **可选设置**：每日简报与北京时间、资金测算使用的参考权益、单笔风险预算、单币保证金额度、现金保留比例和计划杠杆。未配置资金参数时沿用默认参考值，并非真实账户。
+
+回车保留已有值，输入 `-` 清空关注列表。Token 和 API Key 隐藏输入，已保存时只显示“已保存，回车保留”，不展示原值。取消向导不会保存尚未完成的输入。关闭 AI 会清除保存的模型连接和 API Key，之后仍可生成规则报告。
+
+本地配置保存在 `.data/`，可用 `--data-dir` 指定其他目录。密钥文件权限为 `0600`，对话、关注和参数保存在 SQLite 中。配置过程不调用 Telegram、模型或交易所；保存成功不等于网络连接已验证，启动后用 `/price` 和 `/ask` 检查。
+
+Docker 首次配置及运行：
 
 ```bash
-docker compose up -d --build
-docker compose logs -f --tail=100 ai2b
+docker compose build
+docker compose run --rm ai2b --configure
+docker compose up -d
 ```
 
-项目只有一份 `compose.yaml`，默认启动 Telegram 助手，不发布端口。镜像的 HTTP 健康检查在 Compose 中关闭；进程重启、日志轮转、非 root 运行、持久数据卷仍保留。容器运行状态不代表行情、模型或 Telegram 网络正常，请用 `/price`、`/ask` 和日志核对。
+配置容器使用终端输入，完成后退出；后台服务读取同一 `ai2b_data` 卷，不会重复询问。修改配置先 `docker compose stop ai2b`，然后再次执行 `run --rm ai2b --configure`，最后 `up -d`。只有一个 `compose.yaml`，同一个 Bot Token 只运行一个长轮询实例；已配置 webhook 时需先移除。
 
-旧版 Docker 部署在同一项目目录执行 `docker compose up -d --build` 即可切换，继续使用原 `ai2b_data` 卷。同一个 Bot Token 只运行一个长轮询实例；已配置 webhook 时需移除 webhook。更新使用 `docker compose up -d --build`，停止使用 `docker compose down`。
-
-原网页模式也可以接收电报对话：启动前设置 `AI2B_TELEGRAM_CHAT_ENABLED=true`、`AI2B_MONITOR_ENABLED=true`、`AI2B_TELEGRAM_ENABLED=true`。已有保存设置优先于环境默认值；可通过原设置 API 修改新增字段，或改用 `--telegram-only` 强制启用这三个开关。初次启动的环境参数会保存，之后修改 `.env` 不会覆盖已有设置；纯 Telegram 的监测阈值可通过 `/monitor` 修改。
+`.env` 是可选的非交互初始化方式，示例见 `.env.example`。保存的设置优先于环境默认值；保存的密钥优先于环境密钥。更新配置优先使用向导，监测阈值可在电报用 `/monitor` 修改。非交互启动缺少 Telegram 参数时会退出并提示配置命令。
 
 ## 电报命令
 
@@ -48,7 +55,7 @@ docker compose logs -f --tail=100 ai2b
 - 默认每币种每四小时一次定时报告，首次报告从第一次监测开始计时。设置间隔0关闭。监控状态、关注列表和推送冷却保存到原数据库，重启不重置。超过三个轮询间隔没有新数据时重新预热窗口，不将断线变化误标为连续监测；过期的队列事件会丢弃。
 - 单次价格预警继续使用原有逻辑，在到达指定价位时推送一次。使用 `/unwatch` 不会删除已设置的独立预警。
 - 新闻来自现有 CoinDesk/Cointelegraph RSS，保留24小时内有发布时间的相关标题摘要与宏观背景，默认缓存五分钟，不是全网搜索，也不能断言新闻导致了价格变化。缺失或部分不可用会明确标注。
-- 价格事件先推送，AI 失败后说明未完成；没有模型配置时自动分析使用规则报告。AI 请求最多每天50次（UTC日），在请求前持久计数，失败也计数，重启不归零。这是调用次数上限，不是美元费用上限。可配置 `AI2B_TELEGRAM_DAILY_AI_CALLS`。原网页 AI 请求沿用原有设置，不受 Telegram 调用次数限制。
+- 价格事件先推送，AI 失败后说明未完成；没有模型配置时自动分析使用规则报告。AI 请求最多每天50次（UTC日），在请求前持久计数，失败也计数，重启不归零。这是调用次数上限，不是美元费用上限。可配置 `AI2B_TELEGRAM_DAILY_AI_CALLS`。每日规则简报不调用模型，不消耗此额度。
 - `--demo` 仍使用合成数据并标注；自动异动和定时推送暂停，手动查询或 AI 对话可能发送明确标注的演示内容。
 
 配置项参见 `.env.example`：`AI2B_MONITOR_WINDOW_MINUTES`、`AI2B_MONITOR_CHANGE_PCT`、`AI2B_MONITOR_COOLDOWN_MINUTES`、`AI2B_MONITOR_REPORT_MINUTES`。服务只读取已收盘 K 线，保持原有合约价格、资金费率与风险测算语义。所有分析对应消息标注的快照时间，非经回测的交易收益保证。
