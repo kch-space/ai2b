@@ -5,18 +5,14 @@ services:
     image: ai2b:local
     init: true
     restart: unless-stopped
-    ports:
-      - "0.0.0.0:${AI2B_PORT:-8765}:8765"
+    command: ["--telegram-only"]
     environment:
       AI2B_LLM_BASE_URL: ${AI2B_LLM_BASE_URL:-}
       AI2B_LLM_MODEL: ${AI2B_LLM_MODEL:-}
       AI2B_LLM_API_KEY: ${AI2B_LLM_API_KEY:-}
       AI2B_TELEGRAM_BOT_TOKEN: ${AI2B_TELEGRAM_BOT_TOKEN:-}
       AI2B_TELEGRAM_CHAT_ID: ${AI2B_TELEGRAM_CHAT_ID:-}
-      AI2B_TELEGRAM_CHAT_ENABLED: ${AI2B_TELEGRAM_CHAT_ENABLED:-false}
-      AI2B_TELEGRAM_ENABLED: ${AI2B_TELEGRAM_ENABLED:-false}
       AI2B_TELEGRAM_ALLOWED_USER_IDS: ${AI2B_TELEGRAM_ALLOWED_USER_IDS:-}
-      AI2B_MONITOR_ENABLED: ${AI2B_MONITOR_ENABLED:-false}
       AI2B_MONITOR_WINDOW_MINUTES: ${AI2B_MONITOR_WINDOW_MINUTES:-15}
       AI2B_MONITOR_CHANGE_PCT: ${AI2B_MONITOR_CHANGE_PCT:-2}
       AI2B_MONITOR_COOLDOWN_MINUTES: ${AI2B_MONITOR_COOLDOWN_MINUTES:-30}
@@ -27,16 +23,15 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      disable: true
     stop_grace_period: 15s
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-
 volumes:
   ai2b_data:

@@ -12,13 +12,13 @@
 纯 Telegram 的 Docker 启动：
 
 ```bash
-docker compose -f compose.telegram.yaml up -d --build
-docker compose -f compose.telegram.yaml logs -f --tail=100 ai2b
+docker compose up -d --build
+docker compose logs -f --tail=100 ai2b
 ```
 
-该配置不发布端口，关闭原镜像的 HTTP 健康检查；进程重启、日志轮转、非 root 运行、持久数据卷仍保留。容器运行状态不代表行情、模型或 Telegram 网络正常，请用 `/price`、`/ask` 和日志核对。
+项目只有一份 `compose.yaml`，默认启动 Telegram 助手，不发布端口。镜像的 HTTP 健康检查在 Compose 中关闭；进程重启、日志轮转、非 root 运行、持久数据卷仍保留。容器运行状态不代表行情、模型或 Telegram 网络正常，请用 `/price`、`/ask` 和日志核对。
 
-已经在运行网页版时，先 `docker compose down`，再切换同一项目下的 Telegram 配置。两种配置使用同一 `ai2b_data` 卷，切换无需删除卷。同一个 Bot Token 不可同时运行多个长轮询实例；已配置 webhook 时需移除 webhook 再启动此模式。更新后使用相同的 `-f compose.telegram.yaml` 执行 `up -d --build`；停止使用 `down`，不要附加 `-v`。
+旧版 Docker 部署在同一项目目录执行 `docker compose up -d --build` 即可切换，继续使用原 `ai2b_data` 卷。同一个 Bot Token 只运行一个长轮询实例；已配置 webhook 时需移除 webhook。更新使用 `docker compose up -d --build`，停止使用 `docker compose down`。
 
 原网页模式也可以接收电报对话：启动前设置 `AI2B_TELEGRAM_CHAT_ENABLED=true`、`AI2B_MONITOR_ENABLED=true`、`AI2B_TELEGRAM_ENABLED=true`。已有保存设置优先于环境默认值；可通过原设置 API 修改新增字段，或改用 `--telegram-only` 强制启用这三个开关。初次启动的环境参数会保存，之后修改 `.env` 不会覆盖已有设置；纯 Telegram 的监测阈值可通过 `/monitor` 修改。
 

@@ -13,7 +13,7 @@ python3 app.py --telegram-only
 或使用不发布网页端口的 Docker 配置：
 
 ```bash
-docker compose -f compose.telegram.yaml up -d --build
+docker compose up -d --build
 ```
 
 在电报使用 `/watch BTC ETH`、`/price BTC`、`/analyze BTC`；直接说“分析一下 BTC”，然后追问“关键支撑在哪里？”，AI 会重新读取行情并结合已取得的新闻分析。默认监控约15分钟涨跌达到2%的异动，每币种冷却30分钟，每四小时生成一次分析。模型未配置时自动报告使用规则分析，AI 对话会明确提示需要配置。
@@ -24,7 +24,7 @@ docker compose -f compose.telegram.yaml up -d --build
 
 从旧版升级：旧现货持仓与报告保留，现货持仓排除合约测算，旧现货价格预警停用。请重新核对权益、杠杆、合约持仓，并按合约价位创建预警。
 
-## 启动
+## 可选：本地网页
 
 安装 Git 和 Python 3.10 或更高版本后，克隆仓库并启动。运行时无需安装第三方依赖。
 
@@ -46,25 +46,23 @@ python3.12 app.py --demo
 
 ## Docker 部署
 
-安装 Git、Docker Engine / Docker Desktop 和 Docker Compose 后，克隆仓库并启动。已克隆仓库的用户可直接在项目目录执行 Docker Compose 命令。
+项目只保留一份 `compose.yaml`，默认运行 Telegram 行情助手。首次启动前复制 `.env.example` 为 `.env`，填写 Telegram Token、数字 Chat ID 和模型参数：
 
 ```bash
 git clone https://github.com/kch-space/ai2b.git
 cd ai2b
+cp .env.example .env
+# 编辑 .env 后启动
 docker compose up -d --build
 docker compose ps
 docker compose logs -f --tail=100 ai2b
 ```
 
-打开 `http://127.0.0.1:8765`。首次构建需要联网下载基础镜像与系统包，运行时无需安装 Python。可直接在网页配置模型和 Telegram，也可先复制 `.env.example` 为 `.env` 填写连接参数。
+启动后通过电报操作。容器不发布网页端口，使用非 root 用户、日志轮转和自动重启。设置、密钥、关注列表、对话和报告保存在 `ai2b_data` 命名卷，重建容器后保留；它与本地 Python 的 `.data/` 是两份独立数据。`.env`、`.data/` 和 Git 历史不进入镜像。
 
-原 Python 服务占用 8765 时，可以使用 `AI2B_PORT=8766 docker compose up -d --build`，然后访问 `http://127.0.0.1:8766`。也可在 `.env` 设置 `AI2B_PORT=8766`。
+已部署旧版时，在原项目目录执行 `git pull --ff-only` 和 `docker compose up -d --build` 即可重建为 Telegram 模式，继续使用原数据卷。
 
-Compose 默认将端口发布到 `0.0.0.0`，可通过 `http://服务器IP:8765` 或配置好的反向代理域名访问。使用非 root 用户运行，包含健康检查、日志轮转和容器重启策略。设置、密钥、持仓和报告保存在 `ai2b_data` 命名卷中，重建容器后保留；它与本地 Python 的 `.data/` 是两份独立数据。`.env`、`.data/` 和 Git 历史均不进入镜像。
-
-停止：`docker compose down`。更新代码后执行 `docker compose up -d --build`。**不要使用 `docker compose down -v`，除非确实要删除全部容器数据。**
-
-服务器访问、备份、迁移和演示模式见 [Docker 部署说明](docs/docker.md)。
+停止使用 `docker compose down`，更新使用 `docker compose up -d --build`。备份与迁移见 [Docker 部署说明](docs/docker.md)。
 
 ## 当前功能
 
@@ -167,7 +165,7 @@ analyst/web.py         本地 HTTP 服务与 API
 static/               中文响应式看板
 tests/                离线标准库测试
 Dockerfile            Python 3.12 非 root 容器镜像
-compose.yaml          端口发布、持久卷、自动重启
+compose.yaml          Telegram 默认部署、持久卷、自动重启
 docs/docker.md        Docker 运维和迁移说明
 ```
 
