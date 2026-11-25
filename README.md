@@ -1,17 +1,33 @@
 # ai2b · Crypto Intelligence
 
-面向个人研究的加密货币市场监控、预警与分析平台，让重要的市场信息主动找到人。
+面向个人研究的加密货币市场监控、预警与分析平台，让重要信息主动找到人。
 
-## 项目简介
+规划监控 Binance USDT 永续合约的价格、成交量、OI 与资金费率，提供规则预警及后续研究分析；不包含自动下单或真实资金管理。
 
-- 监控 Binance USDT 永续合约的价格、成交量、OI 与资金费率。
-- 基于规则识别市场异动，展示预警证据，并提供 Web 查看与通知能力。
-- 后续扩展现货、链上巨鲸与历史信号分析。
+## 项目结构
 
-## 项目状态
+- `backend/`：Java 21 + Spring Boot + Maven，基础健康接口。
+- `frontend/`：Vue 3 + TypeScript + Vite，首页与后端连接检测。
+- `docs/`：设计方案与本地开发说明。
 
-当前处于设计阶段，尚未实现业务代码。系统不包含自动下单或真实资金管理功能。
+**当前状态：** 已创建基础工程；行情、预警、数据库、认证和通知尚未接入。
 
-## 文档
+## 本地启动
 
-完整架构、数据模型、规则预警、API、实施计划及验收标准见 [设计方案](docs/DESIGN.md)。
+需要 JDK 21、Maven 3.9+、Node.js 22.22.2+（22.x）或 24.15+（24.x）、npm 10+。分别在两个终端执行：
+
+```powershell
+# 后端（在仓库根目录）
+mvn -f backend/pom.xml spring-boot:run
+```
+
+```powershell
+# 前端（在仓库根目录）
+cd frontend
+npm ci
+npm run dev
+```
+
+首页：http://127.0.0.1:5173 · 健康接口：http://127.0.0.1:8080/api/v1/health
+
+[设计方案](docs/DESIGN.md) · [开发与验证说明](docs/DEVELOPMENT.md)

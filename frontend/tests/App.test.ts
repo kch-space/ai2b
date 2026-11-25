@@ -1,0 +1,77 @@
+import { flushPromises, mount } from '@vue/test-utils'
+import type { VueWrapper } from '@vue/test-utils'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import App from '../src/App.vue'
+
+// Simulated application metadata only; never a production market-data source.
+const fixture = {
+  status: 'UP', service: 'test-backend',
+  timestamp: '2026-11-25T00:00:00Z', requestId: 'test-request',
+}
+let wrapper: VueWrapper | undefined
+
+afterEach(() => {
+  wrapper?.unmount()
+  wrapper = undefined
+  vi.unstubAllGlobals()
+  vi.useRealTimers()
+})
+
+describe('application home', () => {
+  it('shows loading without inventing a connected state', () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
+    wrapper = mount(App)
+    expect(wrapper.text()).toContain('正在检查后端服务')
+    expect(wrapper.get('button').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).not.toContain('后端服务已连接')
+  })
+
+  it('shows successful metadata and explicitly unimplemented market capabilities', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(fixture))))
+    wrapper = mount(App)
+    await flushPromises()
+    expect(wrapper.text()).toContain('后端服务已连接')
+    expect(wrapper.text()).toContain('test-backend')
+    expect(wrapper.text()).toContain('test-request')
+    expect(wrapper.findAll('.planned')).toHaveLength(3)
+    expect(wrapper.text()).toContain('不代表行情采集、数据库或通知渠道已连接')
+  })
+
+  it('shows failure and can retry successfully', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('网络不可用'))
+      .mockResolvedValueOnce(new Response(JSON.stringify(fixture)))
+    vi.stubGlobal('fetch', fetchMock)
+    wrapper = mount(App)
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('网络不可用')
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('后端服务已连接')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('turns a timed-out request into a retryable error', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn((_url, options: RequestInit) => new Promise((_resolve, reject) => {
+      options.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+    })))
+    wrapper = mount(App)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(wrapper.get('[role="alert"]').text()).toContain('请求超时')
+    expect(wrapper.get('button').attributes('disabled')).toBeUndefined()
+  })
+
+  it('cancels the pending request on unmount', () => {
+    let signal: AbortSignal | undefined
+    vi.stubGlobal('fetch', vi.fn((_url, options: RequestInit) => {
+      signal = options.signal as AbortSignal
+      return new Promise(() => {})
+    }))
+    wrapper = mount(App)
+    wrapper.unmount()
+    wrapper = undefined
+    expect(signal?.aborted).toBe(true)
+  })
+})
