@@ -20,7 +20,7 @@ afterEach(() => {
 describe('application home', () => {
   it('shows loading without inventing a connected state', () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
-    wrapper = mount(App)
+    wrapper = mount(App, { global: { stubs: { InstrumentList: true } } })
     expect(wrapper.text()).toContain('正在检查后端服务')
     expect(wrapper.get('button').attributes('disabled')).toBeDefined()
     expect(wrapper.text()).not.toContain('后端服务已连接')
@@ -28,7 +28,7 @@ describe('application home', () => {
 
   it('shows successful metadata and explicitly unimplemented market capabilities', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(fixture))))
-    wrapper = mount(App)
+    wrapper = mount(App, { global: { stubs: { InstrumentList: true } } })
     await flushPromises()
     expect(wrapper.text()).toContain('后端服务已连接')
     expect(wrapper.text()).toContain('test-backend')
@@ -42,7 +42,7 @@ describe('application home', () => {
       .mockRejectedValueOnce(new Error('网络不可用'))
       .mockResolvedValueOnce(new Response(JSON.stringify(fixture)))
     vi.stubGlobal('fetch', fetchMock)
-    wrapper = mount(App)
+    wrapper = mount(App, { global: { stubs: { InstrumentList: true } } })
     await flushPromises()
     expect(wrapper.get('[role="alert"]').text()).toContain('网络不可用')
     await wrapper.get('button').trigger('click')
@@ -57,7 +57,7 @@ describe('application home', () => {
     vi.stubGlobal('fetch', vi.fn((_url, options: RequestInit) => new Promise((_resolve, reject) => {
       options.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
     })))
-    wrapper = mount(App)
+    wrapper = mount(App, { global: { stubs: { InstrumentList: true } } })
     await vi.advanceTimersByTimeAsync(5000)
     expect(wrapper.get('[role="alert"]').text()).toContain('请求超时')
     expect(wrapper.get('button').attributes('disabled')).toBeUndefined()
@@ -69,7 +69,7 @@ describe('application home', () => {
       signal = options.signal as AbortSignal
       return new Promise(() => {})
     }))
-    wrapper = mount(App)
+    wrapper = mount(App, { global: { stubs: { InstrumentList: true } } })
     wrapper.unmount()
     wrapper = undefined
     expect(signal?.aborted).toBe(true)

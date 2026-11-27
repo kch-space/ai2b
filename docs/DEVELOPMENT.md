@@ -1,164 +1,155 @@
 # 本地开发与验证
 
-## 范围
+更新日期：2026-11-27。当前开发环境为 macOS / zsh，项目脚本使用 Bash。
 
-当前已完成 Spring Boot 健康接口、Vue 首页与本地连接联调，并在用户授权后接入 MySQL、HikariCP 与 Flyway。测试库 `crypto_intelligence` 已创建，首版迁移建立 `instrument`、`collector_checkpoint` 两张基础表及 Flyway 历史表；尚无业务数据、行情采集、规则、交易密钥、认证或通知功能，不调用交易所/通知服务。
+## 当前范围
 
-后端暂为单 Maven 模块，按实际业务增长拆分。前端只引入 Vue 和基础开发/测试工具；Pinia、组件库和图表按业务需要后续加入。
+已实现健康检查、MySQL/Flyway 基础表、Binance USDT 永续合约元数据同步与列表页。未接入实时价格/K 线、OI、资金费率、规则、通知、认证或 AI 分析。
 
-## 环境
+后端为单 Maven 模块，按 package 划分健康检查与合约模块；通过 Java 21 HttpClient 访问交易所、JdbcTemplate 持久化。前端仅使用 Vue 与基础开发工具，暂不增加状态库或组件库。
 
-- JDK 21（`java -version` 和 `mvn -version` 均应显示 21）。
-- Maven 3.9+；使用已有仓库设置，本项目不修改用户或系统 Maven 配置。
-- MySQL 8.0.16+（本次测试实例为 8.0.27），需支持 TLS；迁移账号拥有目标库建表权限。
-- 推荐 Node.js 22.22.2+（22.x）或 24.15+（24.x），npm 10+。测试工具对 Node 的要求高于仅运行 Vite。
-- npm / Maven 需要下载公开依赖；不向外部上传本地文件或公司数据。
+## Mac 开发环境
 
-此前验证已确认本机安装 JDK 21.0.13.1，路径为 `C:\Program Files\Java\jdk-21.0.13.1`；当时工具会话继承的 JAVA_HOME/PATH 指向 Java 8。此前验证仅在命令进程内选择已安装 JDK 21，未修改系统或用户环境变量。用户本次确认启动成功，但未提供新的环境版本输出，不能据此认定所有终端的 Java 配置均已调整。日常启动前仍需确认 `java -version` 与 `mvn -version` 都显示 21。
+本次验证：Java 21.0.10、Maven 3.8.9、Node.js 26.5.0、npm 11.17.0。
 
-## 启动
-
-在仓库根目录打开两个 PowerShell 终端。先在后端终端设置下方数据库环境变量；已有测试库无需再次创建：
-
-```powershell
-mvn -f backend/pom.xml spring-boot:run
+```bash
+java -version
+mvn -version
+node --version
+npm --version
 ```
 
-```powershell
+- JDK 21：`java` 与 Maven 使用的 JDK 都需要是 21。多版本时可在当前终端执行 `export JAVA_HOME="$(/usr/libexec/java_home -v 21)"`，并将 `$JAVA_HOME/bin` 放到 PATH 前面。
+- Maven 3.8.9+：当前版本已实际通过构建，无需为本项目强制升级；项目不修改全局 Maven 配置。
+- Node.js：`package.json` 接受 `>=22.22.2 <23 || >=24.15.0`，包括当前使用的 26.5.0。`frontend/.node-version` 固定已验证版本，供支持该文件的版本管理器使用。
+- MySQL 8.0.16+，必须支持 TLS。本次远程开发实例为 MySQL 8.0.27。
+- 公开依赖安装与 Binance 元数据同步需要网络；不需要交易所密钥。
+
+## 数据库配置与首次初始化
+
+在仓库根目录执行一次：
+
+```bash
+cp backend/.env.example backend/.env.local
+chmod 600 backend/.env.local
+```
+
+用编辑器填写 `backend/.env.local`：
+
+```bash
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_NAME=crypto_intelligence
+DB_USERNAME='your_development_user'
+DB_PASSWORD='your_development_password'
+# 可选：关闭后台自动同步，但仍允许页面手动同步
+# INSTRUMENT_SYNC_ENABLED=false
+```
+
+示例中的值必须替换为实际开发库配置。当前测试库连接信息已配置在本机 `.env.local`，不要重复复制示例覆盖。密码含特殊字符时使用正确的 Shell 引号；该文件被 Bash 加载，只填写可信的环境变量赋值。真实地址、账号和密码不写入文档或 Git。不要使用 `set -x` 输出配置。
+
+`start.sh` 和 `initialize-database.sh` 自动加载该文件；文件中的同名值优先于继承的环境变量。也可不创建文件，直接在启动终端设置 DB_*。IDE 或直接 `mvn` / `java -jar` 启动不会自动读取此文件。
+
+已有库直接启动。对于尚不存在的开发库，审阅 V1 SQL 后执行：
+
+```bash
+./backend/tools/initialize-database.sh
+```
+
+初始化工具检查 MySQL 版本，按需创建 `DB_NAME`，应用并校验 Flyway 迁移，输出迁移结果、TLS 状态和会话时区。初始化账号需要建库/建表权限；日常运行可使用目标库范围内的账号。该工具支持重复执行，不会清库；非空且没有 Flyway 历史的库不会自动接管。失败后先检查历史，不做自动清理。
+
+连接强制 TLS（`sslMode=REQUIRED`）、会话时区 UTC。当前没有配置 CA 与服务端身份验证；此配置是开发配置。Flyway 禁用 clean 和自动 baseline，已执行的 V1 保持原样，后续结构变更新增迁移。
+
+## 启动与停止
+
+在仓库根目录启动后端：
+
+```bash
+./backend/tools/start.sh
+```
+
+在另一个终端启动前端：
+
+```bash
 cd frontend
 npm ci
 npm run dev
 ```
 
-- 前端：http://127.0.0.1:5173，仅本机监听。
-- 后端：`GET http://127.0.0.1:8080/api/v1/health`，返回 status、service、UTC timestamp、requestId。
-- Actuator：`GET http://127.0.0.1:8080/actuator/health`，包含数据源健康检查，只暴露汇总状态，不暴露内部详情；数据库故障时可返回 DOWN / HTTP 503。
-- 健康为 UP 仅指应用可用，不能据此认为数据采集/通知健康。
-- 页面使用相对 `/api/v1/health`，Vite 开发代理转发到 `127.0.0.1:8080`，不需要开放 CORS。
-- 请求超时为 5 秒；连接失败或响应无效时显示错误并可手动重试。
-- 默认只绑定 loopback，尚无认证，不能直接暴露到公网或当作生产服务。
+两端均通过 Ctrl+C 停止。默认只绑定 `127.0.0.1`：
 
-如果 5173 已占用，Vite 会明确报错而不自动换端口。后端 8080 与代理目标须保持一致；修改配置需另行确认。
+| 地址 | 用途 |
+| --- | --- |
+| `http://127.0.0.1:5173` | 首页、合约列表、手动同步 |
+| `http://127.0.0.1:8080/api/v1/health` | 应用可用性，不检查行情或数据库 |
+| `http://127.0.0.1:8080/actuator/health` | 包含数据库的汇总健康；数据库故障可返回 503 |
 
-## 数据库配置与首次初始化
+Vite 将 `/api` 代理到 8080，不开放 CORS。5173 已占用会明确报错，不自动切换端口。`npm run preview` 仅用于静态构建预览，没有开发 API 代理。当前未实现认证，保持本机访问；同步接口的自定义请求头只防止跨站表单提交，不等于用户认证。
 
-连接由当前进程环境变量注入，仓库不保存真实地址或凭据。`backend/.env.example` 仅为占位说明，Spring Boot 不会自动加载 `.env`；IDE 启动时也需设置环境变量。
+Windows 仍可在 PowerShell 中设置 DB_*，然后执行 `mvn -f backend/pom.xml spring-boot:run`；新库初始化保留 `backend/tools/Initialize-Database.ps1`。Mac 脚本不依赖 PowerShell。
 
-```powershell
-# 在运行后端的同一终端执行；密码输入不回显，也不进入命令历史。
-$env:DB_HOST = Read-Host 'MySQL 主机'
-$env:DB_PORT = '3306'
-$env:DB_NAME = 'crypto_intelligence'
-$env:DB_USERNAME = Read-Host 'MySQL 用户'
-$env:DB_PASSWORD = [System.Net.NetworkCredential]::new('', (Read-Host 'MySQL 密码' -AsSecureString)).Password
+## 合约同步与列表
 
-# 正常启动：Flyway 校验并应用尚未执行的迁移。
-mvn -f backend/pom.xml spring-boot:run
+后端调用 `GET /fapi/v1/exchangeInfo`，默认基址 `https://fapi.binance.com`，可由 `BINANCE_REST_BASE_URL` 覆盖为可信的数据源。每条记录要求 `contractType=PERPETUAL`、`quoteAsset=USDT`、`marginAsset=USDT`，保留来源的交易状态，页面可筛选 `TRADING`。
+
+- 使用 `PRICE_FILTER.tickSize` 与 `LOT_SIZE.stepSize`，不把 `pricePrecision` / `quantityPrecision` 当作步长。以 `DECIMAL(38,18)` 入库，API 用普通十进制字符串返回，避免浏览器浮点精度损失。
+- 启动 5 秒后同步，每次任务结束后间隔一小时再次同步；`INSTRUMENT_SYNC_ENABLED=false` 关闭自动任务。外部接口失败不阻止应用启动。
+- 手动入口为页面“同步合约”。单实例串行执行，成功/失败后的默认冷却为 60 秒；429/418 遵循不低于 60 秒的整数 `Retry-After`，失败时不立即重试。
+- 先完整获取并校验快照，再用同一事务更新合约与 `collector_checkpoint`。相同标的复用 ID 和创建时间；新增合约插入，已有合约更新精度与状态。
+- 成功快照未包含的已有合约保留，标记本地状态 `NOT_IN_SNAPSHOT`，不推断交易所已下架；后续重新出现可恢复来源状态。
+- 网络错误、空快照、重复标的、格式/精度错误不会覆盖已有数据；保存失败整批回滚，检查点不前移。
+- 检查点持久化最近成功时间；本次运行中的尝试时间、错误与冷却在内存中，重启会重置。当前只支持单个后端实例执行同步。
+- 页面展示 UTC+8 时间，超过两小时未成功同步提示可能陈旧。失败时展示错误与已有数据，不用模拟合约填充空库。页面通过查询/刷新按钮读取最新结果。
+- 元数据不包含实时价格、成交量或合约乘数分析。后续行情模块需要另行实现数据采集与资产单位处理。
+
+### API
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/v1/instruments` | `keyword` 为合约名子串、`status` 为原始状态或 `NOT_IN_SNAPSHOT`、`page` 从 1 开始、`size` 默认 50，最大 200 |
+| POST | `/api/v1/instruments/sync` | 请求头 `X-AI2B-Action: sync-instruments`；同步执行，返回同步状态 |
+
+列表按 symbol 升序，返回 `items/total/page/size/sync/requestId`。`sync` 含最近成功时间、本次尝试时间、运行状态、错误和可再次尝试时间。接口参数错误返回 400；同步忙碌/冷却返回 429；上游或同步失败返回 503，并携带 `Retry-After` 与可读错误。查询使用参数化 SQL，搜索不将 `_` 视为通配符。
+
+```bash
+curl 'http://127.0.0.1:8080/api/v1/instruments?keyword=BTC&status=TRADING&page=1&size=25'
+curl -X POST -H 'X-AI2B-Action: sync-instruments' \
+  http://127.0.0.1:8080/api/v1/instruments/sync
 ```
 
-- 必须提供 `DB_USERNAME`、`DB_PASSWORD`；不设置真实密码默认值。主机默认本机、端口默认 3306、库名默认 `crypto_intelligence`。
-- JDBC 强制 TLS（`sslMode=REQUIRED`），不会降级明文；当前未配置服务端证书身份验证，生产连接需另行评估 CA 与 `VERIFY_IDENTITY`，不得将测试配置视为生产安全验收。
-- JDBC 会话时区强制 UTC，字符编码 UTF-8；新库使用 `utf8mb4` / `utf8mb4_bin`，标的身份按大小写精确去重，金额/数量精度为 `DECIMAL(38,18)`。
-- Flyway 启动校验 checksum，不自动 baseline，禁用 clean。已执行的迁移不得修改；后续变更新增 V2 等版本，并按配置/数据库变更流程二次确认。
-- 没有自动创建数据库的应用配置，避免日常运行账号必须拥有全局建库权限；本次已授权创建的测试库可以直接启动。
-
-对于**另一个尚不存在且已获授权的开发库**，先审阅 SQL，再在配置好环境变量和 JDK 21 的终端显式执行：
-
-```powershell
-.\backend\tools\Initialize-Database.ps1
-```
-
-该工具使用项目运行时依赖，无需安装 MySQL 命令行客户端；检查 MySQL 版本与目标名，执行 `CREATE DATABASE IF NOT EXISTS`，随后应用并验证 Flyway 迁移。重复执行对已有库不重新建表；非空且无 Flyway 历史的库不自动接管。失败时停止，不自动删除/回滚数据库；MySQL DDL 可能部分生效，需审查历史后再处理，不能直接重试或清库。
-
-账号建议拆分为迁移账号和仅限目标库的运行账号；本次按授权使用用户提供的测试账号，未创建新账号或调整权限。日常使用结束后可清除当前终端凭据（不修改系统环境变量）：
-
-```powershell
-Remove-Item Env:\DB_PASSWORD -ErrorAction SilentlyContinue
-Remove-Item Env:\DB_USERNAME -ErrorAction SilentlyContinue
-```
+该模块复用 V1 的两张基础表，无需 V2，无需重新建库。
 
 ## 构建与测试
 
-```powershell
-# 在仓库根目录，需要 JDK 21
-mvn -f backend/pom.xml verify
+```bash
+# 仓库根目录
+mvn -B -ntp -f backend/pom.xml verify
 
-# 在 frontend 目录
+# frontend 目录
 npm ci
 npm test
 npm run build
 ```
 
-后端 8 项测试涵盖健康响应、UTC 时间、不同请求 ID、Actuator、未开放路径，以及迁移幂等、唯一键和数值精度/约束。自动化测试使用 `test` profile 的本地 H2（MySQL 模式），覆盖凭据与数据源，不连接远程测试库；H2 不能替代真实 MySQL 兼容性验收。本次另行在已授权的 MySQL 实例验证迁移与 Spring 数据源。前端测试涵盖加载、成功、失败重试、超时、卸载取消和响应校验，fixture 明确是模拟应用元数据。
+后端自动化测试使用本地 H2（MySQL 模式），覆盖 DB_* 且禁用自动同步，不连接远程库或交易所。HTTP 适配器使用本地 HTTP fixture 验证路径、响应解析与限流；集成测试验证幂等、状态更新、缺失保留、事务回滚、精度、分页和输入校验。前端覆盖连接状态、列表、筛选分页、精度字符串、同步成功/失败、超时和卸载取消。
 
-构建产物分别为 `backend/target/crypto-intelligence-backend-0.1.0-SNAPSHOT.jar` 与 `frontend/dist/`，均不纳入 Git。
+产物：`backend/target/crypto-intelligence-backend-0.1.0-SNAPSHOT.jar`、`frontend/dist/`，均忽略。运行 jar 时需自行注入环境变量。浏览器检查记录与截图位于忽略的 `output/playwright/`、`.playwright-cli/`。
 
-```powershell
-java -jar backend/target/crypto-intelligence-backend-0.1.0-SNAPSHOT.jar
-```
+## 验证记录（2026-11-27，Mac）
 
-`npm run preview` 仅用于静态构建检查，不包含开发服务器 `/api` 代理，不能据此验证前后端连接。部署代理、HTTPS、认证与行情持久化属于后续工作；本次数据库仅接入基础表。
-
-## 验证记录（2026-11-25）
-
-| 检查 | 实际结果 |
+| 检查 | 结果 |
 | --- | --- |
-| 依赖安装 | `npm install --no-audit --no-fund` 成功，已生成并保留 package-lock.json |
-| 前端测试 | `npm test`，2 个测试文件、11 项测试通过 |
-| 前端构建 | `npm run build`，TypeScript 检查与 Vite 生产构建通过 |
-| 前端开发服务 | `npm run dev` 启动成功，首页 HTTP 200 |
-| 后端兼容性测试与打包 | 使用本机已有 JDK 17，在当前命令进程临时设置 JAVA_HOME/PATH，执行 `mvn -B -ntp -Djava.version=17 verify`；4 项测试通过并打包成功 |
-| 后端真实 HTTP 启动 / 联调 | 用户确认通过，并提供首页截图：显示“后端服务已连接”、服务名 `crypto-intelligence-backend`、检查时间与请求 ID。此前启动异常见下方历史记录；本次未由工具重新发起 HTTP 检查 |
-| Java 21 构建、测试与打包 | 已验证：使用已安装 JDK 21.0.13.1 执行 `mvn -B -ntp verify`，4 项测试通过、BUILD SUCCESS；`javap` 确认应用 class 的 major version 为 65（Java 21） |
+| 后端构建与打包 | JDK 21 / Maven 3.8.9，20 项测试通过，`verify` 成功 |
+| 前端测试与构建 | Node 26.5.0，23 项测试通过，类型检查与生产构建通过 |
+| 真实 MySQL 启动 | HikariCP 连接成功，Flyway V1 checksum 校验通过，无待应用迁移 |
+| 实际 HTTP 健康检查 | `/api/v1/health` 与 `/actuator/health` 均 200 / UP |
+| 真实 Binance 同步 | 通过后端 Java HttpClient 获取并写入 659 个 USDT 永续合约；数量随交易所变化 |
+| 列表与校验接口 | 返回实际合约、分页与检查点；size=201 返回 400 |
+| MySQL 连接参数实测 | MySQL 8.0.27、TLS_AES_256_GCM_SHA384、会话时区 +00:00；659 个标的均唯一 |
+| 浏览器实际联调 | 桌面与 390px 移动端显示正常；真实库搜索/状态筛选正常，451 失败时保留已存合约 |
 
-此前的 Java 17 兼容性验证产物已由当时的 JDK 21 构建重新打包，当时已确认应用字节码为 Java 21。单元/上下文测试成功不等同后端监听成功，也不代表业务功能验收通过。未执行生产部署、真实通知或交易所接入。
+已验证真实请求成功并写入数据；独立探测和后续后台请求也出现过 HTTP 451，当前交易所访问存在不稳定性，尚不能保证持续成功同步。失败后已有 659 条数据和成功检查点保持不变，页面显示错误。不根据单次成功推断网络问题已解决，不切换模拟行情。此前 Windows 下的 NIO 启动问题为历史环境记录，当前 Mac 实际 HTTP 启动已验证。
 
-### 历史记录：JDK 21 启动问题复核
+## 下一步
 
-- 此前直接使用 `C:\Program Files\Java\jdk-21.0.13.1\bin\java.exe` 启动打包 jar，在 Tomcat 的 NIO 初始化时失败。
-- 在被 Git 忽略的 `backend/target/LoopbackProbe.java` 中执行仅调用 `Selector.open()` 的最小 Java 诊断，不加载 Spring Boot，也出现相同异常。
-- 堆栈指向 Windows NIO Selector / Pipe 的 UnixDomainSockets connect 阶段，说明问题可独立于业务代码复现；具体系统环境原因尚未确定，不能仅据此断言防火墙、安全软件或 JDK 缺陷。
-- 此前已验证 JDK 21 安装与 Maven 构建，但当时真实 HTTP 服务和前后端联调未通过；当时临时前端开发服务已停止，未改项目端口、网络协议或系统设置。此条仅描述此前验证，不代表用户本次运行状态。
-
-### 本地联调成功补充（用户确认）
-
-- 2026-11-25 用户确认前后端已正常启动联调，首页截图显示“后端服务已连接”。
-- 截图中的服务为 `crypto-intelligence-backend`，检查时间为 `2026年11月25日 16:25:44`（UTC+8），并显示请求 ID；结合现有前端代码，说明页面已收到并通过健康响应格式校验。
-- 当前基础健康接口联调不再作为下一阶段的阻塞项。此前 Windows NIO loopback 异常保留为历史记录；具体修复步骤、根因和本次启动命令未提供，不作推断。
-- 本次更新依据用户确认及截图，未重新运行构建、自动化测试、独立健康接口或 Actuator 检查；上表构建与测试结果为此前记录。
-- 行情、数据库、规则、通知和认证仍未接入；基础联调通过不等同完整 M0 或 P0 验收通过。
-
-
-### MySQL / Flyway 接入验证（2026-11-25）
-
-| 检查 | 实际结果 |
-| --- | --- |
-| 授权范围 | 用户二次确认允许增加 MySQL/Flyway 依赖、连接配置、新建测试库并执行迁移 |
-| 连通性与版本 | 测试库 3306 端口可达；MySQL 8.0.27 |
-| 新库与首版迁移 | `crypto_intelligence` 创建成功；V1 成功，存在 `instrument`、`collector_checkpoint`、`flyway_schema_history` |
-| 连接保护与时区 | TLS cipher `TLS_AES_256_GCM_SHA384`；会话时区 `+00:00` |
-| 后端构建与测试 | JDK 21.0.13.1，`mvn -B -ntp -f backend/pom.xml verify`，8 项测试通过、BUILD SUCCESS |
-| Spring 数据库装配 | 使用默认配置启动非 Web Spring 上下文，HikariCP 连接成功，数据源健康 UP |
-| 校验与重复迁移 | `Flyway.validate()` 成功，重复 `migrate()` 应用 0 项迁移；两张业务基础表均为 0 行 |
-| 本轮范围之外 | 未启动新的 HTTP 监听、未重启用户现有服务、未重跑前端测试；未实现认证、采集、规则、通知或创建专用数据库账号 |
-
-本次数据库上下文验证使用被 Git 忽略的 `backend/target/DatabaseContextProbe.java`，验证后上下文与连接池已关闭；不是生产服务，也不代表新版 HTTP/前后端联调已再次验证。之前用户确认的健康接口联调记录仍保留。重启到新版后端前需在启动终端配置数据库环境变量。
-
-## 下一阶段准备（M0 进行中）
-
-按 [设计方案](DESIGN.md#10-实施里程碑与验收) 推进，先补齐 M0 剩余基座，再实现 M1 最小预警闭环。数据库部分已获用户二次确认并完成，认证与业务闭环仍待实施；本节规划不构成新增配置变更、外部数据源调用或真实通知授权。
-
-### 实施顺序
-
-1. **确认实施范围与环境**：确认 MySQL 版本、实例是否可用、数据库权限、单用户认证方案；明确首批标的、历史补录范围及规则参数。真实凭据不写入文档或提交 Git。
-2. **补齐持久化与认证基座**：按设计引入数据库迁移、参数校验与单用户认证，验证迁移和受保护接口；保持本地监听。涉及依赖、数据库连接或其他配置变更，执行前须向用户二次确认。
-3. **实现 M1 最小闭环**：合约元数据、闭合 1m K 线、5m 价格规则、事件/history/outbox、Web 事件页和 mock 通知。先用明确标记的测试 fixture 验证规则、去重与事务，不把模拟数据当作真实行情。
-4. **验证真实行情采集**：经确认后核实 Binance 公开行情接口的连通性、限流、时间与字段口径，再接入采集与历史补偿；不需要交易密钥，不上传本地或公司内部数据。数据不可用时明确展示缺失或错误状态。
-5. **验收与更新记录**：验证重复输入不重复建事件、历史补录不误报、升级/恢复/重启行为、Web 事件展示及前后端构建测试。mock 成功不能视为真实通知送达；真实渠道和消息测试另行授权。
-
-### 开始前待确认
-
-- [ ] 是否按“补齐 M0 → M1 最小闭环”推进，以及本轮具体交付范围。
-- [x] MySQL 实例、版本与开发数据库准备情况；连接配置变更及新建 `crypto_intelligence` 已获二次确认并验证。
-- [ ] 单用户认证方式、首批标的、补录窗口及初始规则阈值。
-- [ ] 公开行情调用范围；首轮通知仅使用 mock，不发送真实消息。
+在现有合约列表上，先针对 BTCUSDT、ETHUSDT 实现闭合 1m K 线落库、有限历史补录与缺口恢复，再实现 5m 价格异动规则、事件中心和 mock 通知。认证应在开放远程访问及配置写接口前补齐。

@@ -2,32 +2,38 @@
 
 面向个人研究的加密货币市场监控、预警与分析平台，让重要信息主动找到人。
 
-规划监控 Binance USDT 永续合约的价格、成交量、OI 与资金费率，提供规则预警及后续研究分析；不包含自动下单或真实资金管理。
+首期面向 Binance USDT 永续合约，逐步接入价格、成交量、OI、资金费率与规则预警；不包含自动下单或真实资金管理。
 
-## 项目结构
+## 当前功能
 
-- `backend/`：Java 21 + Spring Boot + Maven，健康接口、MySQL 与 Flyway 基础迁移。
-- `frontend/`：Vue 3 + TypeScript + Vite，首页与后端连接检测。
-- `docs/`：设计方案与本地开发说明。
+- Java 21 + Spring Boot 后端、Vue 3 + TypeScript 前端。
+- MySQL + Flyway；应用与数据库健康检查。
+- Binance 合约元数据同步：启动后自动同步、每小时刷新、手动同步；保留交易状态与精确步长。
+- 合约列表：搜索、状态筛选、分页、同步时间及失败提示。
 
-**当前状态：** 基础工程及健康接口联调已完成，MySQL 测试库与首版基础表迁移已验证；行情、预警、认证和通知尚未接入。
+**尚未实现：** 实时价格/K 线采集、自选、规则预警、认证、通知和 AI 分析。合约元数据不等于实时行情。
 
-## 本地启动
+## Mac 本地启动
 
-需要 JDK 21、Maven 3.9+、Node.js 22.22.2+（22.x）或 24.15+（24.x）、npm 10+，以及 MySQL 8.0.16+（支持 TLS）。先按[开发说明](docs/DEVELOPMENT.md#数据库配置与首次初始化)在后端启动终端设置 `DB_HOST`、`DB_PORT`、`DB_NAME`、`DB_USERNAME`、`DB_PASSWORD`；不将真实凭据提交 Git。分别在两个终端执行：
+需要 JDK 21、Maven 3.8.9+、npm 10+、MySQL 8.0.16+（支持 TLS）。Node.js 支持 22.22.2+（22.x）或 24.15+；当前 Mac 已验证 Node 26.5.0，`frontend/.node-version` 记录该版本。
 
-```powershell
-# 后端（在仓库根目录）
-mvn -f backend/pom.xml spring-boot:run
+首次配置：复制 `backend/.env.example` 为 `backend/.env.local`，填写开发数据库连接信息，然后执行 `chmod 600 backend/.env.local`。该文件已被 Git 忽略。已有开发库无需重新初始化；新库按[开发说明](docs/DEVELOPMENT.md#数据库配置与首次初始化)执行初始化。
+
+分别在两个终端运行：
+
+```bash
+# 仓库根目录；脚本自动加载 backend/.env.local
+./backend/tools/start.sh
 ```
 
-```powershell
-# 前端（在仓库根目录）
+```bash
 cd frontend
 npm ci
 npm run dev
 ```
 
-首页：http://127.0.0.1:5173 · 健康接口：http://127.0.0.1:8080/api/v1/health
+首页：http://127.0.0.1:5173 · 应用健康：http://127.0.0.1:8080/api/v1/health · 数据库健康：http://127.0.0.1:8080/actuator/health
+
+前后端仅监听本机。直接在 IDE 或执行 Maven 启动时，需自行注入环境变量；Spring Boot 不会自动读取 `.env.local`。
 
 [设计方案](docs/DESIGN.md) · [开发与验证说明](docs/DEVELOPMENT.md)

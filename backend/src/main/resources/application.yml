@@ -2,9 +2,9 @@ spring:
   application:
     name: crypto-intelligence-backend
   datasource:
-    url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/${DB_NAME:crypto_intelligence}?sslMode=REQUIRED&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true&preserveInstants=true&characterEncoding=UTF-8&connectTimeout=5000&socketTimeout=10000
-    username: ${DB_USERNAME}
-    password: ${DB_PASSWORD}
+    url: jdbc:mysql://${DB_HOST:43.137.12.22}:${DB_PORT:3306}/${DB_NAME:crypto_intelligence}?sslMode=REQUIRED&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true&preserveInstants=true&characterEncoding=UTF-8&connectTimeout=5000&socketTimeout=10000
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:kch123}
     hikari:
       maximum-pool-size: 5
       minimum-idle: 1
@@ -30,3 +30,12 @@ management:
   endpoint:
     health:
       show-details: never
+
+market:
+  binance:
+    rest-base-url: ${BINANCE_REST_BASE_URL:https://fapi.binance.com}
+  instruments:
+    sync-enabled: ${INSTRUMENT_SYNC_ENABLED:true}
+    initial-delay-ms: 5000
+    sync-interval-ms: 3600000
+    cooldown-seconds: 60

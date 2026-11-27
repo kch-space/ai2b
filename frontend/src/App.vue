@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import InstrumentList from './components/InstrumentList.vue'
 import { getHealth } from './api/health'
 import type { HealthResponse } from './api/health'
 
@@ -56,13 +57,13 @@ onUnmounted(() => {
         <span class="brand-mark" aria-hidden="true">CI</span>
         <span>Crypto Intelligence<small>ai2b · 市场情报工作台</small></span>
       </a>
-      <span class="tag">工程初始化</span>
+      <span class="tag">合约基础信息</span>
     </header>
 
     <section class="intro">
       <p class="eyebrow">MARKET INTELLIGENCE</p>
       <h1>重要信息，主动找到你。</h1>
-      <p class="intro-copy">加密货币市场监控、预警与分析平台。前后端基础工程已就绪，行情与预警能力将在后续阶段接入。</p>
+      <p class="intro-copy">加密货币市场监控、预警与分析平台。已接入合约基础信息同步，行情与预警能力将在后续阶段接入。</p>
     </section>
 
     <section class="panel" aria-labelledby="connection-title">
@@ -86,6 +87,8 @@ onUnmounted(() => {
       </dl>
       <p class="note">仅检测应用可用性，不代表行情采集、数据库或通知渠道已连接。</p>
     </section>
+
+    <InstrumentList />
 
     <section class="features" aria-label="规划能力">
       <article class="feature"><span class="feature-number">01</span><h2>市场监控</h2><p>价格、成交量、OI 与资金费率</p><span class="planned">待实现</span></article>
