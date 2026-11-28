@@ -20,6 +20,20 @@ describe('integration API', () => {
     await testIntegration('ai', 'analyze', 1, new AbortController().signal, 'event-id')
     expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual({ confirmed: true, version: 1, eventId: 'event-id' })
   })
+  it('validates discovery candidates and confirms the version without including the Token', async () => {
+    const chat = { chatId: '-1001234', type: 'supergroup', title: 'Research', username: '', lastMessageAt: '2026-11-28T01:00:00Z' }
+    const fetch = vi.fn().mockResolvedValue(response({ success: true, message: '请选择', botUsername: 'test_bot', chats: [chat] }))
+    vi.stubGlobal('fetch', fetch)
+    expect((await testIntegration('telegram', 'chats', 7, new AbortController().signal)).chats).toEqual([chat])
+    expect(fetch.mock.calls[0]![0]).toBe('/api/v1/integrations/telegram/test/chats')
+    expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual({ confirmed: true, version: 7 })
+    for (const malformed of [undefined, {}, [{ ...chat, chatId: 123 }], [{ ...chat, chatId: '0' }], [{ ...chat, type: 'channel' }], [{ ...chat, lastMessageAt: 'invalid' }], [{ ...chat, username: '<script>' }]]) {
+      fetch.mockResolvedValue(response({ success: true, message: '请选择', botUsername: 'test_bot', chats: malformed }))
+      await expect(testIntegration('telegram', 'chats', 7, new AbortController().signal)).rejects.toThrow('会话响应格式不正确')
+    }
+    fetch.mockResolvedValue(response({ success: true, message: '请选择', botUsername: '../unsafe', chats: [chat] }))
+    await expect(testIntegration('telegram', 'chats', 7, new AbortController().signal)).rejects.toThrow('身份响应格式不正确')
+  })
   it('propagates server errors and validates reports', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ message: '只允许本机' }, 403)))
     await expect(getIntegrations(new AbortController().signal)).rejects.toThrow('只允许本机')

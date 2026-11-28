@@ -19,6 +19,44 @@ public class IntegrationClients {
         if(!username.matches("[A-Za-z0-9_]{5,64}"))throw new IntegrationException(502,"机器人响应缺少身份信息");
         return Map.of("success",true,"botUsername",username,"message","机器人身份验证成功；尚未发送消息");
     }
+    public record TelegramChat(String chatId, String type, String title, String username, String lastMessageAt) { }
+
+    /** One-shot discovery only: no offset/allowed_updates, so no acknowledgement or subscription change. */
+    public Map<String,Object> telegramDiscoverChats(IntegrationService.Config c) {
+        String botUsername=(String)telegramConnect(c).get("botUsername");
+        JsonNode updates=telegram(c,"getUpdates",Map.of("timeout",0,"limit",100)).path("result");
+        if(!updates.isArray())throw new IntegrationException(502,"Telegram 更新响应格式无效");
+        Map<String,TelegramChat> chats=new LinkedHashMap<>();
+        String secret=configs.secret(c);
+        for(JsonNode update:updates) {
+            JsonNode message=update.path("message"), chat=message.path("chat");
+            String text=message.path("text").asText("").strip();
+            String command=text.split("\\s+",2)[0];
+            if(!command.equals("/start") && !command.equalsIgnoreCase("/start@"+botUsername))continue;
+            String type=chat.path("type").asText("");
+            if(!Set.of("private","group","supergroup").contains(type) || !chat.path("id").isIntegralNumber()
+                    || !chat.path("id").canConvertToLong() || !message.path("date").isIntegralNumber() || !message.path("date").canConvertToLong())continue;
+            long id=chat.path("id").asLong(), date=message.path("date").asLong(-1);
+            if(id==0 || (id < -4503599627370495L || id > 4503599627370495L) || date<0 || date>253402300799L)continue;
+            String title=type.equals("private")
+                    ? (chat.path("first_name").asText("")+" "+chat.path("last_name").asText("")).strip()
+                    : chat.path("title").asText("");
+            title=title.replace(secret,"[REDACTED]");
+            if(title.isBlank())title=type.equals("private")?"私人会话":"群组";
+            title=title.substring(0,Math.min(160,title.length()));
+            String username=chat.path("username").asText("");
+            if(!username.matches("[A-Za-z0-9_]{5,64}"))username="";
+            String chatId=Long.toString(id);
+            var candidate=new TelegramChat(chatId,type,title,username,java.time.Instant.ofEpochSecond(date).toString());
+            var previous=chats.get(chatId);
+            if(previous==null || candidate.lastMessageAt().compareTo(previous.lastMessageAt())>0)chats.put(chatId,candidate);
+        }
+        var candidates=chats.values().stream().sorted(Comparator.comparing(TelegramChat::lastMessageAt).reversed()).toList();
+        return Map.of("success",true,"botUsername",botUsername,"chats",candidates,"message",candidates.isEmpty()
+                ? "未找到待处理的 /start。请向该机器人发送 /start 后再获取；仅查看最早 100 条待处理更新，其他程序可能已消费消息；也可手动填写 Chat ID。"
+                : "已读取待处理更新中的 /start 会话，请核对并选择接收人，再保存配置；未自动绑定、发送消息或启用预警。");
+    }
+
     public String telegramSend(IntegrationService.Config c,String chat,String text) {
         if(!chat.matches("-?\\d{1,20}"))throw new IntegrationException(400,"请先保存有效 Chat ID");
         JsonNode body=telegram(c,"sendMessage",Map.of("chat_id",chat,"text",text.substring(0,Math.min(3500,text.length())),"disable_web_page_preview",true));
@@ -30,6 +68,7 @@ public class IntegrationClients {
         JsonNode response=http.request("https://api.telegram.org/bot"+configs.secret(c)+"/"+method,"POST",null,body,true);
         if(!response.path("ok").asBoolean()) {
             int code=response.path("error_code").asInt(502);
+            if(code==409 && method.equals("getUpdates"))throw new IntegrationException(409,"Telegram 更新读取冲突：请检查已有 webhook 或其他 getUpdates 程序；不会自动删除 webhook，请改用手动 Chat ID 或处理冲突后重试。");
             long retry=Math.max(1,Math.min(3600,response.path("parameters").path("retry_after").asLong(15)));
             throw new IntegrationException(code==429?429:502,"Telegram 返回错误码 "+code,code!=429 && code<500,retry);
         }

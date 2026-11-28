@@ -296,3 +296,12 @@ td { padding: 16px 12px; border-bottom: 1px solid #253349; }
 .confirm-dialog h3 { margin-top: 0; font-size: 17px; }.confirm-dialog p { font-size: 12px; line-height: 2; color: #b4c8de; }
 .ai-reply { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; line-height: 1.9; font-size: 12px; color: #bbd1e5; }
 .integration-audit { margin-top: 22px; color: #9ab1c9; font-size: 11px; }
+
+/* Telegram onboarding: candidate selection is explicit, never automatic. */
+.telegram-setup ol { padding-left: 1.4rem; line-height: 1.9; }
+.telegram-chat-list { display: grid; gap: 12px; margin: 20px 0; }
+.telegram-chat-candidate { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px; border: 1px solid var(--border, #293a4e); border-radius: 10px; }
+.telegram-chat-candidate div { min-width: 0; overflow-wrap: anywhere; }
+.telegram-chat-candidate p { margin: 6px 0; }
+.telegram-chat-candidate button { flex-shrink: 0; }
+@media (max-width: 640px) { .telegram-chat-candidate { align-items: flex-start; flex-direction: column; } }

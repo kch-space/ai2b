@@ -39,10 +39,10 @@ export function validateBaseUrl(value: string): string | null {
     return null
   } catch { return '请输入完整有效的 Base URL（例如 https://api.openai.com/v1）。' }
 }
-export function validateTelegram(token: string, chatId: string): string[] {
+export function validateTelegram(token: string, chatId: string, requireChatId = true): string[] {
   const errors: string[] = []
   if (!/^\d{5,20}:[A-Za-z0-9_-]{20,100}$/.test(token.trim())) errors.push('Bot Token 格式应为机器人数字 ID:密钥，请从 BotFather 获取。')
-  if (!/^-?\d{1,20}$/.test(chatId.trim())) errors.push('Chat ID 需为数字，群组 ID 通常是负数；不要填写手机号。')
+  if ((requireChatId || chatId.trim()) && !/^-?\d{1,20}$/.test(chatId.trim())) errors.push('Chat ID 需为数字，群组 ID 通常是负数；不要填写手机号。')
   return errors
 }
 export function validateAI(config: Preferences['ai'], key: string): string[] {

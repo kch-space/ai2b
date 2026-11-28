@@ -34,6 +34,13 @@ describe('local UI preferences and non-secret drafts', () => {
     expect(validateBaseUrl('http://localhost:11434/v1')).toBeNull()
     expect(validateBaseUrl('https://example.com/v1')).toBeNull()
   })
+  it('allows Token-only setup but requires Chat ID before enabling', () => {
+    const token = '123456789:abcdefghijklmnopqrstuvw'
+    expect(validateTelegram(token, '', false)).toEqual([])
+    expect(validateTelegram(token, '', true)).toHaveLength(1)
+    expect(validateTelegram(token, 'phone', false)).toHaveLength(1)
+    expect(validateTelegram('', '', false)).toHaveLength(1)
+  })
   it('checks syntax without claiming credentials are valid', () => {
     expect(validateTelegram('123456789:abcdefghijklmnopqrstuvw', '-1001234567890')).toEqual([])
     expect(validateTelegram('', 'phone')).toHaveLength(2)

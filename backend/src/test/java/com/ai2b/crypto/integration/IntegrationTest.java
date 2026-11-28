@@ -55,6 +55,14 @@ class IntegrationTest {
         mvc.perform(get("/api/v1/integrations")).andExpect(status().isOk()).andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString(token))));
         assertThat(configs.audits().toString()).doesNotContain(token);
     }
+    @Test void tokenCanBeSavedBeforeChatIdButCannotEnableNotificationsYet() {
+        var saved=configs.save("TELEGRAM",new IntegrationService.Update(0,false,tg(""),token,false));
+        assertThat(saved).containsEntry("enabled",false).containsEntry("secretConfigured",true);
+        assertThat(configs.ready("TELEGRAM",false).settings()).containsEntry("chatId","");
+        assertThatThrownBy(()->configs.save("TELEGRAM",new IntegrationService.Update(1,true,tg(""),null,false)))
+                .isInstanceOf(IntegrationException.class).hasMessageContaining("启用前");
+        verify(http,never()).request(anyString(),anyString(),any(),any(),anyBoolean());
+    }
     @Test void enableRequiresSecretAndFieldsAndServerRejectsInvalidValues(){
         assertThatThrownBy(()->configs.save("TELEGRAM",new IntegrationService.Update(0,true,tg(""),null,false))).isInstanceOf(IntegrationException.class);
         assertThatThrownBy(()->configs.save("TELEGRAM",new IntegrationService.Update(0,true,tg("phone"),token,false))).isInstanceOf(IntegrationException.class);

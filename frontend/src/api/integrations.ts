@@ -4,7 +4,8 @@ export interface IntegrationConfig {
 }
 export interface IntegrationAudit { id: string; kind: string; action: string; outcome: string; detail: string; createdAt: string }
 export interface IntegrationOverview { audit?: IntegrationAudit[]; telegram: IntegrationConfig; ai: IntegrationConfig; aiAllowedHosts: string[]; allowLocalAI: boolean }
-export interface IntegrationResult { success: boolean; message: string; reply?: string; messageId?: string; botUsername?: string; modelAvailable?: boolean; reportId?: string }
+export interface TelegramChat { chatId: string; type: 'private' | 'group' | 'supergroup'; title: string; username: string; lastMessageAt: string }
+export interface IntegrationResult { success: boolean; message: string; reply?: string; messageId?: string; botUsername?: string; modelAvailable?: boolean; reportId?: string; chats?: TelegramChat[] }
 export interface AIReport { id: string; model: string; text: string; createdAt: string }
 async function request(path: string, signal: AbortSignal, method = 'GET', body?: unknown): Promise<unknown> {
   const response = await fetch(`/api/v1/integrations${path}`, { method, signal, cache: 'no-store',
@@ -34,6 +35,12 @@ export async function saveIntegration(kind: IntegrationKind, update: { version: 
 export async function testIntegration(kind: IntegrationKind, action: string, version: number, signal: AbortSignal, eventId?: string): Promise<IntegrationResult> {
   const data = await request(`/${kind}/test/${action}`, signal, 'POST', { confirmed: true, version, eventId })
   if (!object(data) || data.success !== true || typeof data.message !== 'string' || (data.reply !== undefined && typeof data.reply !== 'string')) throw new Error('集成测试响应格式不正确')
+  if (data.botUsername !== undefined && (typeof data.botUsername !== 'string' || !/^[A-Za-z0-9_]{5,64}$/.test(data.botUsername))) throw new Error('机器人身份响应格式不正确')
+  if (kind === 'telegram' && action === 'chats' && (!Array.isArray(data.chats) || data.chats.length > 100 || typeof data.botUsername !== 'string'
+    || !data.chats.every(c => object(c) && typeof c.chatId === 'string' && /^-?[1-9]\d{0,19}$/.test(c.chatId)
+      && ['private', 'group', 'supergroup'].includes(String(c.type)) && typeof c.title === 'string' && c.title.length <= 160
+      && typeof c.username === 'string' && (c.username === '' || /^[A-Za-z0-9_]{5,64}$/.test(c.username))
+      && typeof c.lastMessageAt === 'string' && Number.isFinite(Date.parse(c.lastMessageAt))))) throw new Error('Telegram 会话响应格式不正确')
   return data as unknown as IntegrationResult
 }
 export async function getReports(eventId: string, signal: AbortSignal): Promise<AIReport[]> {

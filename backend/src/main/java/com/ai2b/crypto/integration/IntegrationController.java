@@ -25,7 +25,7 @@ public class IntegrationController {
     @PutMapping("/{kind}") public Map<String,Object> save(@PathVariable String kind,@RequestBody IntegrationService.Update update) {return configs.save(kind.toUpperCase(Locale.ROOT),update);}
     @PostMapping("/{kind}/test/{action}") public Map<String,Object> test(@PathVariable String kind,@PathVariable String action,@RequestBody Confirmation confirmation) {
         kind=kind.toUpperCase(Locale.ROOT);
-        if(!Set.of("TELEGRAM","AI").contains(kind)||!Set.of("connect","send","reply","analyze").contains(action))throw new IntegrationException(404,"测试操作不存在");
+        if(!Set.of("TELEGRAM","AI").contains(kind)||!(kind.equals("TELEGRAM") ? Set.of("connect","send","chats") : Set.of("connect","reply","analyze")).contains(action))throw new IntegrationException(404,"测试操作不存在");
         if(!confirmation.confirmed())throw new IntegrationException(400,"需要明确确认外部请求；发送/模型调用可能产生消息或费用");
         AtomicBoolean lock=busy.computeIfAbsent(kind,k->new AtomicBoolean());
         if(!lock.compareAndSet(false,true))throw new IntegrationException(409,"该集成正在执行请求，请勿重复提交");
@@ -38,6 +38,7 @@ public class IntegrationController {
             Map<String,Object> result;
             if(kind.equals("TELEGRAM")) {
                 if(action.equals("connect"))result=clients.telegramConnect(snapshot);
+                else if(action.equals("chats"))result=clients.telegramDiscoverChats(snapshot);
                 else if(action.equals("send")) {
                     var c=snapshot;
                     String id=clients.telegramSend(c,IntegrationService.text(c.settings(),"chatId"),"ai2b 测试消息：你已明确确认发送。本消息不是行情预警或交易建议。");
@@ -49,6 +50,7 @@ public class IntegrationController {
                 result=Map.of("success",true,"reply",text,"message","模型已返回真实回复");
             } else if(action.equals("analyze"))result=analyze(confirmation.eventId(), snapshot);
             else throw new IntegrationException(404,"AI 测试操作不存在");
+            if(action.equals("chats") && configs.config(kind).version()!=snapshot.version())throw new IntegrationException(409,"配置已变更，请刷新后重新获取 Chat ID");
             configs.audit(kind,action.toUpperCase(Locale.ROOT),"SUCCESS","Provider returned validated response");
             return result;
         } catch(IntegrationException e) {configs.audit(kind,action.toUpperCase(Locale.ROOT),"FAILED",e.getMessage());throw e;}

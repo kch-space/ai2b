@@ -68,6 +68,8 @@ public class SafeHttpTransport {
             try (Response response = client.newCall(builder.method(method, payload).build()).execute()) {
                 int status = response.code();
                 if (!response.isSuccessful()) {
+                    if (telegram && uri.getPath().endsWith("/getUpdates") && status == 409)
+                        throw new IntegrationException(409, "Telegram 更新读取冲突：请检查已有 webhook 或其他 getUpdates 程序；不会自动删除 webhook，可手动填写 Chat ID。");
                     long retry = 0;
                     try { retry = Math.min(3600, Math.max(1, Long.parseLong(response.header("Retry-After", "5")))); } catch (NumberFormatException ignored) { retry = 5; }
                     throw new IntegrationException(status == 429 ? 429 : 502, "外部服务返回 HTTP " + status,

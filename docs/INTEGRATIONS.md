@@ -6,7 +6,7 @@
 
 ## 已实现与边界
 
-- Telegram：保存/替换/删除 Token、Chat ID、最低等级、证据选项；getMe 连接验证、真实测试消息；启用后新预警写独立 Telegram outbox。
+- Telegram：保存/替换/删除 Token、Chat ID、最低等级、证据选项；getMe 连接验证、从 `/start` 一次性发现 Chat ID、真实测试消息；启用后新预警写独立 Telegram outbox。
 - AI：OpenAI-compatible Base URL、API Key、模型、temperature/max_tokens；模型列表连接检查、固定提示词回复测试；事件页手动研究与报告持久化。
 - 所有集成默认关闭；**测试仍可在自动发送/事件分析开关关闭时执行**，但每次需独立确认。没有配置密钥时不可测试。
 - AI 不自动扫描、不参与价格规则，不保证报告正确，也不包含自动下单、Bot 命令轮询或收益承诺。
@@ -15,14 +15,23 @@
 ## 使用顺序
 
 1. 已有开发库先备份，正常启动后端与前端，由应用 Flyway 加载公共与 vendor 迁移并应用 V5（不重建数据库、不改旧迁移、不清理行情）。初始化工具当前只运行公共 V1–V4，不能替代应用启动后的 V5 升级，见 [开发说明](DEVELOPMENT.md)。
-2. `/#/settings/telegram` 填 Bot Token / Chat ID，先保持开关关闭，确认保存服务端配置。
-3. 点击“连接机器人”，确认 getMe 外部请求；成功只表示 Token 对应机器人身份有效。
+2. `/#/settings/telegram` 先填 Bot Token，Chat ID 可留空，保持预警关闭，点击“保存 Token，继续配置”并确认。已有 Chat ID 也可手动填写。
+3. 点击“连接机器人”，确认 getMe 外部请求；成功后打开显示的 `@机器人` 链接，在 Telegram 中发送 `/start`（群组发送 `/start@机器人用户名`）。随后点击“从 /start 获取 Chat ID”，确认联网、核对会话并点击“使用此 Chat ID”，再确认保存服务端配置。获取不会自动绑定、发送消息或启用预警。
 4. 点击“发送测试消息”，确认接收 Chat ID；Telegram 返回 message_id 才显示发送确认，**不等于接收人已阅读**。
 5. 确认目标无误后勾选“启用真实 Telegram 预警”并确认保存。只对后续应通知的 OPEN / ESCALATE / REMIND / RESOLVE 新增队列，不回播旧事件。
 6. `/#/settings/ai` 配置服务商地址、模型与 Key，保存后确认执行连接/回复测试。模型列表没有列出该模型不等于回复必定失败，部分兼容服务不支持 `/models`。
 7. 需要分析时允许手动 AI 事件分析；在事件详情点击“分析本事件”，确认将该事件价格/变化率/时间证据发送给指定模型。报告按事件与配置版本保存，仅文本展示。
 
 未保存修改时禁用真实测试；请求带保存版本，避免前端测试过期配置。按集成串行执行并设 10 秒本机冷却，不自动轮询外部测试。网络取消/超时可能发生在服务商已接受之后，先核对记录再重试。
+
+## 从 /start 获取 Chat ID 的边界
+
+- 仅在本机用户点击并确认后调用 `getMe`、`getUpdates(timeout=0, limit=100)`；没有后台轮询、命令回复或自动 `/start` 绑定。
+- 只从最早 100 条待处理更新中的普通消息筛选 `/start`、`/start@当前机器人`（可带参数），按 Chat ID 去重，列出私人会话/群组的名称、ID 和时间。完整消息及参数不返回、不写入审计或数据库；选择不是身份认证，必须人工核对接收人。
+- 不传 `offset`（不确认消费或跳过更新）、不改变 `allowed_updates`、不删除 webhook。Telegram 仅保留有限时间的待处理更新，已被其他程序消费、积压超过 100 条或历史订阅未包含 message 时可能找不到；可以重新发送 `/start` 或手填 Chat ID。本功能不会清理积压来找最新消息。
+- 不应与其他 `getUpdates` 程序同时使用；HTTP/JSON 409 显示 webhook/轮询冲突，用户自行处理或改为手填，不自动抢占。短请求未必能检测到其他消费者存在。
+- 配置版本冲突、没有 Token、未确认或非本机操作都不能获取；10 秒冷却与操作审计仍生效。获取后改 Token/配置、刷新失败或版本变化会清空候选，避免误用旧接收人。
+- 选择会话仅填入表单，通知开关不变；必须再次保存后才改变目标。尚无 Chat ID 时不能启用预警或发送测试消息。
 
 ## Telegram 启用与 MOCK 显示
 
@@ -78,6 +87,7 @@
 | `GET /api/v1/integrations` | 脱敏 Telegram/AI 配置、允许主机、本地模型策略、最近审计 |
 | `PUT /api/v1/integrations/{telegram|ai}` | `{version, enabled, settings, secret?, clearSecret}`；secret 空/省略保留，clearSecret 删除 |
 | `POST /api/v1/integrations/telegram/test/connect` | `{confirmed:true, version}`；getMe |
+| `POST /api/v1/integrations/telegram/test/chats` | `{confirmed:true, version}`；getMe + 单次 getUpdates；返回 botUsername、chats（chatId/type/title/username/lastMessageAt），不自动保存 |
 | `POST /api/v1/integrations/telegram/test/send` | 明确确认真实测试发送 |
 | `POST /api/v1/integrations/ai/test/connect` | 明确确认请求模型列表 |
 | `POST /api/v1/integrations/ai/test/reply` | 明确确认固定测试提示词调用，可能收费 |
@@ -89,10 +99,10 @@
 
 ## 验证与仍未验证
 
-上一轮验证快照：后端 83 项、前端 99 项测试通过；生产打包及前端 typecheck/build 通过。覆盖加密持久化/权限/主密钥丢失、密钥不回传、Origin/Host/远程请求拒绝、地址白名单与私网拒绝、实际本机 HTTP 重定向不跟随、provider 请求/响应契约、明确确认/冷却/版本、新事件 Telegram outbox、改配置取消、429 重试、真实租约过期不重发、AI 报告持久化、前端确认与文本安全展示。
+2026-11-28 本轮验证：后端 95 项、前端 107 项测试通过；生产打包及前端 typecheck/build 通过。覆盖加密持久化/权限/主密钥丢失、密钥不回传、Origin/Host/远程请求拒绝、地址白名单与私网拒绝、实际本机 HTTP 重定向不跟随、provider 请求/响应契约、明确确认/冷却/版本、新事件 Telegram outbox、改配置取消、429 重试、真实租约过期不重发、AI 报告持久化、前端确认与文本安全展示。
 
-使用 H2/MySQL 兼容模式、模拟 provider 及隔离本机 HTTP 服务。浏览器使用空 H2 测试库联调了配置读取和确认弹窗；未输入真实密钥、未发 Telegram 消息、未调用外部模型、未修改真实 MySQL。真实 MySQL V4/V5、服务商可达性/地区限制、通知送达和长时间运行仍需用户配置与明确确认后验证。此次仅更新文档，没有执行真实调用或重跑测试。
+使用 H2/MySQL 兼容模式、模拟 provider 及隔离本机 HTTP 服务。浏览器使用空 H2 测试库联调了配置读取和确认弹窗；未输入真实密钥、未发 Telegram 消息、未调用外部模型、未修改真实 MySQL。真实 MySQL V4/V5、服务商可达性/地区限制、通知送达和长时间运行仍需用户配置与明确确认后验证。本轮增加 Token-only 保存、/start 筛选/去重、冲突/确认/版本/冷却、候选选择与清空、响应校验的自动测试；没有执行真实 Telegram 调用或新增浏览器验收。
 
 ## 后续接入
 
-优先完成真实环境验收、主密钥备份恢复、完整认证与通知人工核对/重试；再按需接入 Telegram Bot 查询、更多模型提供方、本机模型兼容验证及自动异步 AI。当前不包含 Bot 命令/webhook/轮询、自动 AI 或任意内网模型地址；不能通过放宽 SSRF 策略来绕过连接错误。具体依赖与验收条件见 [路线图](ROADMAP.md)。
+优先完成真实环境验收、主密钥备份恢复、完整认证与通知人工核对/重试；再按需接入 Telegram Bot 查询、更多模型提供方、本机模型兼容验证及自动异步 AI。当前仅手动单次读取 `/start` 辅助配置，不包含 Bot 查询/命令回复/webhook/后台轮询、自动 AI 或任意内网模型地址；不能通过放宽 SSRF 策略来绕过连接错误。具体依赖与验收条件见 [路线图](ROADMAP.md)。
