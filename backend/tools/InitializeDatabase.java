@@ -1,4 +1,5 @@
 import java.nio.file.Path;
+import java.net.URI;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -6,20 +7,20 @@ import java.sql.SQLException;
 import java.sql.Statement;
 
 import org.flywaydb.core.Flyway;
+import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.core.env.MutablePropertySources;
+import org.springframework.core.env.PropertyResolver;
+import org.springframework.core.env.PropertySourcesPropertyResolver;
+import org.springframework.core.io.FileSystemResource;
 
 /** Explicit, authorized test-database provisioning. Never prints connection credentials. */
 public class InitializeDatabase {
-    private static String required(String name) {
-        String value = System.getenv(name);
+    private static String required(PropertyResolver config, String name) {
+        String value = config.getProperty(name);
         if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException("Missing environment variable: " + name);
+            throw new IllegalArgumentException("Missing dev YAML property: " + name);
         }
         return value;
-    }
-
-    private static String optional(String name, String fallback) {
-        String value = System.getenv(name);
-        return value == null || value.isBlank() ? fallback : value;
     }
 
     public static void main(String[] args) {
@@ -31,29 +32,35 @@ public class InitializeDatabase {
             System.exit(1);
         } catch (Exception exception) {
             System.err.println("Initialization failed (" + exception.getClass().getSimpleName()
-                    + "). Check environment, MySQL version, TLS and Flyway history. Details omitted.");
+                    + "). Check dev YAML, MySQL version, TLS and Flyway history. Details omitted.");
             System.exit(1);
         }
     }
 
     private static void initialize(String[] args) throws Exception {
-        if (args.length != 1) {
-            throw new IllegalArgumentException("Expected local migration directory");
+        if (args.length != 2) {
+            throw new IllegalArgumentException("Expected local migration directory and dev YAML path");
         }
-        String host = optional("DB_HOST", "127.0.0.1");
-        String port = optional("DB_PORT", "3306");
-        String database = optional("DB_NAME", "crypto_intelligence");
+        MutablePropertySources sources = new MutablePropertySources();
+        new YamlPropertySourceLoader().load("dev", new FileSystemResource(args[1]))
+                .forEach(sources::addLast);
+        PropertyResolver config = new PropertySourcesPropertyResolver(sources);
+        String url = required(config, "spring.datasource.url");
+        if (!url.startsWith("jdbc:mysql://")) {
+            throw new IllegalArgumentException("Expected MySQL JDBC URL");
+        }
+        URI target = URI.create(url.substring("jdbc:".length()));
+        String database = target.getPath().substring(1);
         // Identifiers cannot be JDBC placeholders. Reject delimiters and URL injection.
-        if (!host.matches("[A-Za-z0-9.-]+") || !port.matches("[0-9]{1,5}")
-                || Integer.parseInt(port) < 1 || Integer.parseInt(port) > 65535
+        if (target.getHost() == null || target.getUserInfo() != null || target.getFragment() != null
+                || (target.getPort() != -1 && (target.getPort() < 1 || target.getPort() > 65535))
                 || !database.matches("[A-Za-z][A-Za-z0-9_]{0,63}")) {
             throw new IllegalArgumentException("Invalid database target");
         }
-        String username = required("DB_USERNAME");
-        String password = required("DB_PASSWORD");
-        String prefix = "jdbc:mysql://" + host + ":" + port + "/";
-        String options = "?sslMode=REQUIRED&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true"
-                + "&preserveInstants=true&characterEncoding=UTF-8&connectTimeout=5000&socketTimeout=10000";
+        String username = required(config, "spring.datasource.username");
+        String password = required(config, "spring.datasource.password");
+        String prefix = "jdbc:mysql://" + target.getRawAuthority() + "/";
+        String options = target.getRawQuery() == null ? "" : "?" + target.getRawQuery();
         try (Connection connection = DriverManager.getConnection(prefix + options, username, password);
                 Statement statement = connection.createStatement()) {
             String version = connection.getMetaData().getDatabaseProductVersion();

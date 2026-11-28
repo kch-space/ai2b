@@ -4,9 +4,9 @@
 
 > [返回项目介绍](../README.md)
 >
-> 文档版本：v0.1 · 更新日期：2026-11-27 · 状态：基础工程、数据库基础迁移及合约元数据同步已实现，其余业务设计待实施
+> 文档版本：v0.3 · 更新日期：2026-11-27 · 状态：基础工程、合约元数据、BTC/ETH 闭合 K 线、OI / 费率 / 多空比分布已实现，其余业务设计待实施
 >
-> 本文依据提供的 `crypto-intelligence-design.md` 整理。当前已创建 backend 与 frontend 基础工程、健康连接检测、MySQL/Flyway 基础表，以及 Binance 合约元数据同步与列表页；以下其余业务模块、接口、数据表与部署方式仍为规划，不代表已有功能。参考文档中的代理执行指令不构成本次实施授权。
+> 本文依据提供的 `crypto-intelligence-design.md` 整理。当前已创建 backend 与 frontend 基础工程、健康连接检测、MySQL/Flyway V1 / V2 / V3、Binance 合约元数据同步与列表页，以及 BTCUSDT / ETHUSDT 闭合 1m K 线、OI、资金费率与三种多空比采集、持久化与详情图表。具体实现见 [K 线说明](KLINES.md) 与 [市场指标](METRICS.md)；以下其余业务模块、接口、数据表与部署方式仍为规划，不代表已有功能。参考文档中的代理执行指令不构成本次实施授权。
 
 ## 1. 项目定位
 
@@ -72,7 +72,7 @@ REST/WS 只出现在采集层；规则不直接处理交易所 JSON，不直接�
 
 ### 3.3 建议代码组织
 
-以下为未来模块化代码组织方案。当前 backend 为单 Maven 模块，frontend 为 Vue 工程（含合约列表）；业务模块按闭环需要逐步建立，不生成占位空壳。
+以下为未来模块化代码组织方案。当前 backend 为单 Maven 模块，frontend 为 Vue 工程（含合约列表与 K 线详情）；业务模块按闭环需要逐步建立，不生成占位空壳。
 
 ```text
 ai2b/
@@ -97,17 +97,17 @@ ai2b/
 
 ### 4.1 候选数据源
 
-以下为参考文档列出的候选接口。`exchangeInfo` 已由实际后端请求验证；其余接口的地址、限流、历史范围和地区可用性仍待验证。
+以下为参考文档列出的候选接口。`exchangeInfo`、`time`、`klines`、`premiumIndex`、`fundingRate`、`openInterestHist` 及三种多空比已由实际后端请求验证；其他接口、WebSocket、全市场规模与长期可用性仍待验证。当前采集使用 Java HttpClient、JdbcTemplate 和有界执行器，图表使用原生 SVG，表内其他技术仍为候选方案。
 
 | 数据 | 候选 Binance 接口/流 | 初始采集方案 |
 | --- | --- | --- |
 | 合约元数据 | `/fapi/v1/exchangeInfo` | 启动与每小时刷新；仅纳入 TRADING、PERPETUAL、USDT 报价/保证金标的 |
 | 24h 行情 | `/fapi/v1/ticker/24hr`、ticker 流 | REST 快照，WS 更新，低频 REST 补偿 |
-| K 线 | `/fapi/v1/klines`、kline 流 | 1m 闭合持久化；未闭合仅缓存；启动按配置补齐，建议先 7 天 |
-| 标记价与资金费率 | `/fapi/v1/premiumIndex`、markPrice 流 | 最新缓存与分钟快照，展示价格口径与结算周期 |
-| 已结算费率 | `/fapi/v1/fundingRate` | 历史补齐与每小时增量 |
-| OI | `/fapi/v1/openInterest`、`/futures/data/openInterestHist` | 每 5 分钟错峰采样，优先自选，区分数量与名义金额 |
-| 多空比 | `/futures/data/globalLongShortAccountRatio`、`topLongShortAccountRatio`、`topLongShortPositionRatio` | 按可用性 5 分钟采样；保留账户/持仓统计口径 |
+| K 线 | `/fapi/v1/klines`、kline 流 | 已实现 BTC/ETH 闭合 1m REST 采集、初始 24h 补录与检查点续采；其他币种、未闭合缓存与 WS 待实施 |
+| 标记价与资金费率 | `/fapi/v1/premiumIndex`、markPrice 流 | 已实现 BTC/ETH 每约 5m 保存 REST 快照与下次结算时间；分钟快照与 WS 待实施 |
+| 已结算费率 | `/fapi/v1/fundingRate` | 已实现 BTC/ETH 最近 24h 结算记录采集，不预设结算周期 |
+| OI | `/fapi/v1/openInterest`、`/futures/data/openInterestHist` | 已实现 BTC/ETH 最近 24h 的 5m 历史样本，区分数量与名义金额 |
+| 多空比 | `/futures/data/globalLongShortAccountRatio`、`topLongShortAccountRatio`、`topLongShortPositionRatio` | 已实现 BTC/ETH 三种 5m 口径，两个大户接口携带 API Key |
 | 主动成交 | K 线 taker buy volume；P1 `aggTrade` 流 | MVP 用闭合 K 线估算，P1 才采重点币逐笔 |
 | 深度/强平 | P1 depth/diff depth；可选 forceOrder 流 | 校验订单簿序列；强平数据明确采样限制 |
 
@@ -123,6 +123,8 @@ ai2b/
 - 多周期由完整 1m 数据聚合；缺任一分钟即标记不完整，不输出伪完整 5m/15m 窗口。
 
 ## 5. 数据存储设计
+
+下表包含规划表。当前 V3 将 OI / 费率 / 多空比保存在统一 `market_metric`（校验后的十进制字符串 JSON）与 `market_metric_sync`（持久化采集状态）中；尚未建立下表的独立 `market_oi/market_funding/market_long_short`。需要 SQL 聚合时再按实际需求迁移。
 
 | 表 | 核心内容与约束 |
 | --- | --- |
@@ -220,7 +222,7 @@ API 前缀统一 `/api/v1`，响应含 requestId；错误使用明确 HTTP 状�
 | GET | `/system/collectors` | 采集健康、延迟与缺口 |
 | POST / GET | `/analysis/reports`、`/analysis/reports/{id}` | P2 异步报告创建与查询 |
 
-上表已实现 GET /instruments，并补充 POST /instruments/sync；其余业务接口未实现。另提供 /api/v1/health 与 /actuator/health 健康接口。实施业务时生成 OpenAPI，并为规则与通知等配置写操作设计二次确认和审计。
+上表已实现 GET /instruments，并补充 POST /instruments/sync。K 线实际以 symbol 寻址：GET /instruments/{symbol}/klines?hours=6 与异步 POST /instruments/{symbol}/klines/sync，仅支持 BTCUSDT / ETHUSDT；详见 [K 线接口](KLINES.md)。另已实现 GET /instruments/{symbol}/metrics 和异步 POST /instruments/{symbol}/metrics/sync，口径与范围见 [市场指标](METRICS.md)。其余业务接口未实现。另提供 /api/v1/health 与 /actuator/health 健康接口。实施业务时生成 OpenAPI，并为规则与通知等配置写操作设计二次确认和审计。
 
 ## 9. 扩展分析与安全运行
 
@@ -234,7 +236,7 @@ API 前缀统一 `/api/v1`，响应含 requestId；错误使用明确 HTTP 状�
 ### 9.2 部署与监控规划
 
 - Compose 规划包含 backend、frontend/nginx、MySQL，Redis 按需；数据库与缓存不对公网暴露，Web 默认本地/受控内网，不在本次公网部署。
-- 未来 `.env.example` 仅提供 DB_*、APP_TIME_ZONE、BINANCE_REST_BASE_URL、BINANCE_WS_BASE_URL、TELEGRAM_BOT_TOKEN、TELEGRAM_CHAT_ID、PUBLIC_BASE_URL 和历史保留等占位符；真实配置不提交 Git。
+- 本地使用 Git 忽略的 `backend/src/main/resources/application-dev.yml` 保存数据库和币安配置，同目录 `.example` 仅提供占位符；公共配置默认使用 dev，`application-prod.yml` 为生产配置。`-Pprod clean package` 排除本地 dev 文件，生产运行显式激活 prod，并注入生产配置；未来通知与历史保留等配置也只提交占位符。
 - 公开行情不需要交易密钥。单用户认证采用安全密码哈希，日志脱敏，备份/恢复及配置修改流程需可审计。
 - 监控 WS 重连、采集延迟、限流、缺口、队列积压、规则耗时、outbox 年龄、通知失败、磁盘和连接池；无数据不能显示健康正常。
 - 通知渠道故障在 Web 可见；单渠道不可用时无法保证实时送达，恢复后按策略重试。
@@ -268,7 +270,7 @@ API 前缀统一 `/api/v1`，响应含 requestId；错误使用明确 HTTP 状�
 
 ## 11. 当前状态与待确认事项
 
-**已完成：** 项目说明、设计方案、Spring Boot 后端健康接口、Vue 前端首页与用户确认的本地联调、MySQL/Flyway 基础迁移（标的与采集检查点）、Mac 开发脚本、Binance 合约元数据同步与合约列表、自动化测试。**未实施：** 行情采集、规则预警、其余业务表迁移、认证、通知与生产部署。本地启动及验证范围见 [开发说明](DEVELOPMENT.md)，完整业务验收尚未通过。
+**已完成：** 项目说明、设计方案、Spring Boot 后端健康接口、Vue 前端首页与本地联调、MySQL/Flyway V1（标的与采集检查点）、V2（闭合 K 线）、V3（市场指标与同步状态）、Mac 开发脚本、Binance 合约元数据同步与合约列表、BTC/ETH 闭合 1m K 线持续采集与图表、24h 初始补录、缺口恢复、重启续采、OI / 费率 / 三种多空比分布及采集状态、自动化测试。**未实施：** 其他行情类型与币种、规则预警、其余业务表迁移、认证、通知与生产部署。本地启动及验证范围见 [开发说明](DEVELOPMENT.md)，完整业务验收尚未通过。
 
 实施前需确认：
 

@@ -9,6 +9,7 @@
 *.tsbuildinfo
 
 # Local settings and secrets
+/backend/src/main/resources/application-dev.yml
 .env
 .env.*
 !.env.example

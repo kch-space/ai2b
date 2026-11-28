@@ -1,12 +1,12 @@
 # 本地开发与验证
 
-更新日期：2026-11-27。当前开发环境为 macOS / zsh，项目脚本使用 Bash。
+更新日期：2026-11-28。当前开发环境为 macOS / zsh，数据库初始化脚本使用 Bash。
 
 ## 当前范围
 
-已实现健康检查、MySQL/Flyway 基础表、Binance USDT 永续合约元数据同步与列表页。未接入实时价格/K 线、OI、资金费率、规则、通知、认证或 AI 分析。
+已实现健康检查、MySQL/Flyway 基础表、Binance USDT 永续合约元数据同步与列表页，以及 BTCUSDT / ETHUSDT 闭合 1m K 线、OI、资金费率和三种多空比采集、存储与详情图表。未接入未闭合实时价格、其他币种行情、规则、通知、认证或 AI 分析。
 
-后端为单 Maven 模块，按 package 划分健康检查与合约模块；通过 Java 21 HttpClient 访问交易所、JdbcTemplate 持久化。前端仅使用 Vue 与基础开发工具，暂不增加状态库或组件库。
+后端为单 Maven 模块，按 package 划分健康检查、合约与 K 线模块；通过 Java 21 HttpClient 访问交易所、JdbcTemplate 持久化。前端仅使用 Vue 与基础开发工具，图表使用原生 SVG，暂不增加状态库、组件库或图表依赖。
 
 ## Mac 开发环境
 
@@ -27,45 +27,56 @@ npm --version
 
 ## 数据库配置与首次初始化
 
-在仓库根目录执行一次：
+本机已配置 `backend/src/main/resources/application-dev.yml`，直接启动即可；无需设置 DB_* 或币安密钥环境变量。新环境在仓库根目录执行一次：
 
 ```bash
-cp backend/.env.example backend/.env.local
-chmod 600 backend/.env.local
+cp backend/src/main/resources/application-dev.yml.example backend/src/main/resources/application-dev.yml
+chmod 600 backend/src/main/resources/application-dev.yml
 ```
 
-用编辑器填写 `backend/.env.local`：
+用编辑器在 YAML 中填写实际值：
 
-```bash
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_NAME=crypto_intelligence
-DB_USERNAME='your_development_user'
-DB_PASSWORD='your_development_password'
-# 可选：关闭后台自动同步，但仍允许页面手动同步
-# INSTRUMENT_SYNC_ENABLED=false
+```yaml
+spring:
+  datasource:
+    url: 'jdbc:mysql://127.0.0.1:3306/crypto_intelligence?sslMode=REQUIRED&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true&preserveInstants=true&rewriteBatchedStatements=true&characterEncoding=UTF-8&connectTimeout=5000&socketTimeout=10000'
+    username: 'your_development_user'
+    password: 'your_development_password'
+market:
+  binance:
+    rest-base-url: 'https://fapi.binance.com'
+    api-key: 'your_api_key'
+    api-secret: 'your_api_secret'
+  instruments:
+    sync-enabled: true
+  klines:
+    enabled: true
+  metrics:
+    enabled: true
 ```
 
-示例中的值必须替换为实际开发库配置。当前测试库连接信息已配置在本机 `.env.local`，不要重复复制示例覆盖。密码含特殊字符时使用正确的 Shell 引号；该文件被 Bash 加载，只填写可信的环境变量赋值。真实地址、账号和密码不写入文档或 Git。不要使用 `set -x` 输出配置。
+不要复制示例覆盖本机已有配置。YAML 字符串使用单引号；值内的单引号写成两个单引号。真实 dev 配置已被 Git 忽略，权限为 `0600`。开发打包会包含 dev 配置，仅供本地使用；生产打包使用下文的 `-Pprod clean package`，排除 dev 文件。
 
-`start.sh` 和 `initialize-database.sh` 自动加载该文件；文件中的同名值优先于继承的环境变量。也可不创建文件，直接在启动终端设置 DB_*。IDE 或直接 `mvn` / `java -jar` 启动不会自动读取此文件。
+`src/main/resources/application.yml` 保存公共配置，设置 `spring.profiles.default: dev`。`application-dev.yml` 保存本地数据库与币安真实值，`application-prod.yml` 保存生产环境配置占位符；测试使用 `src/test/resources/application-test.yml`。IDE 直接运行主类或通过 Maven 启动即可读取 dev，无需设置工作目录或环境变量。初始化工具读取相同的 dev 文件，不加载 `.env.local`。
 
-已有库直接启动。对于尚不存在的开发库，审阅 V1 SQL 后执行：
+两个大户多空比接口使用 `market.binance.api-key`；合约信息、K 线与其他指标不发送密钥。`api-secret` 预留给未来账户签名功能，当前业务不用。当前配置已通过独立只读账户调用验证，但产品中的账户签名请求、余额与个人持仓功能尚未实现。真实值只保存在本机后端配置，不要放入前端 `VITE_*`、日志或版本库。
+
+已有库直接启动，Flyway 自动应用新增迁移。对于尚不存在的开发库，审阅迁移 SQL 后执行：
 
 ```bash
 ./backend/tools/initialize-database.sh
 ```
 
-初始化工具检查 MySQL 版本，按需创建 `DB_NAME`，应用并校验 Flyway 迁移，输出迁移结果、TLS 状态和会话时区。初始化账号需要建库/建表权限；日常运行可使用目标库范围内的账号。该工具支持重复执行，不会清库；非空且没有 Flyway 历史的库不会自动接管。失败后先检查历史，不做自动清理。
+初始化工具检查 MySQL 版本，按需创建 YAML 连接 URL 指定的数据库，应用并校验 Flyway 迁移，输出迁移结果、TLS 状态和会话时区。初始化账号需要建库/建表权限；日常运行可使用目标库范围内的账号。该工具支持重复执行，不会清库；非空且没有 Flyway 历史的库不会自动接管。失败后先检查历史，不做自动清理。
 
-连接强制 TLS（`sslMode=REQUIRED`）、会话时区 UTC。当前没有配置 CA 与服务端身份验证；此配置是开发配置。Flyway 禁用 clean 和自动 baseline，已执行的 V1 保持原样，后续结构变更新增迁移。
+连接强制 TLS（`sslMode=REQUIRED`）、会话时区 UTC。当前没有配置 CA 与服务端身份验证；此配置是开发配置。Flyway 禁用 clean 和自动 baseline，已执行的迁移保持原样，后续结构变更新增迁移。V1 为标的 / 检查点，V2 为闭合 K 线，V3 为市场指标 / 指标同步状态。本地连接地址、账号、密码由 dev YAML 显式配置。
 
 ## 启动与停止
 
-在仓库根目录启动后端：
+IDEA 中直接运行 `CryptoIntelligenceApplication`，或在仓库根目录启动后端：
 
 ```bash
-./backend/tools/start.sh
+mvn -f backend/pom.xml spring-boot:run
 ```
 
 在另一个终端启动前端：
@@ -76,24 +87,34 @@ npm ci
 npm run dev
 ```
 
-两端均通过 Ctrl+C 停止。默认只绑定 `127.0.0.1`：
+终端启动时通过 Ctrl+C 停止；IDEA 启动时使用停止按钮。默认只绑定 `127.0.0.1`：
 
 | 地址 | 用途 |
 | --- | --- |
 | `http://127.0.0.1:5173` | 首页、合约列表、手动同步 |
+| `http://127.0.0.1:5173/#/market/BTCUSDT` | BTC K 线详情；页面内可切换 ETH |
 | `http://127.0.0.1:8080/api/v1/health` | 应用可用性，不检查行情或数据库 |
 | `http://127.0.0.1:8080/actuator/health` | 包含数据库的汇总健康；数据库故障可返回 503 |
 
 Vite 将 `/api` 代理到 8080，不开放 CORS。5173 已占用会明确报错，不自动切换端口。`npm run preview` 仅用于静态构建预览，没有开发 API 代理。当前未实现认证，保持本机访问；同步接口的自定义请求头只防止跨站表单提交，不等于用户认证。
 
-Windows 仍可在 PowerShell 中设置 DB_*，然后执行 `mvn -f backend/pom.xml spring-boot:run`；新库初始化保留 `backend/tools/Initialize-Database.ps1`。Mac 脚本不依赖 PowerShell。
+IDE 直接运行 `CryptoIntelligenceApplication`，未指定 profile 时默认使用 `dev`。也可直接运行：
+
+```bash
+cd backend
+mvn spring-boot:run
+# 本地开发 JAR 同样默认使用 dev
+java -jar target/crypto-intelligence-backend-0.1.0-SNAPSHOT.jar
+```
+
+Windows PowerShell 同样在 `backend` 目录执行 `mvn spring-boot:run`，读取相同的 YAML；新库初始化执行 `backend/tools/Initialize-Database.ps1`，无需 DB_* 环境变量。Mac 数据库初始化脚本不依赖 PowerShell。
 
 ## 合约同步与列表
 
-后端调用 `GET /fapi/v1/exchangeInfo`，默认基址 `https://fapi.binance.com`，可由 `BINANCE_REST_BASE_URL` 覆盖为可信的数据源。每条记录要求 `contractType=PERPETUAL`、`quoteAsset=USDT`、`marginAsset=USDT`，保留来源的交易状态，页面可筛选 `TRADING`。
+后端调用 `GET /fapi/v1/exchangeInfo`，默认基址 `https://fapi.binance.com`，本地可通过 dev YAML 的 `market.binance.rest-base-url` 修改为可信的数据源。每条记录要求 `contractType=PERPETUAL`、`quoteAsset=USDT`、`marginAsset=USDT`，保留来源的交易状态，页面可筛选 `TRADING`。
 
 - 使用 `PRICE_FILTER.tickSize` 与 `LOT_SIZE.stepSize`，不把 `pricePrecision` / `quantityPrecision` 当作步长。以 `DECIMAL(38,18)` 入库，API 用普通十进制字符串返回，避免浏览器浮点精度损失。
-- 启动 5 秒后同步，每次任务结束后间隔一小时再次同步；`INSTRUMENT_SYNC_ENABLED=false` 关闭自动任务。外部接口失败不阻止应用启动。
+- 启动 5 秒后同步，每次任务结束后间隔一小时再次同步；dev YAML 的 `market.instruments.sync-enabled: false` 关闭自动任务。外部接口失败不阻止应用启动。
 - 手动入口为页面“同步合约”。单实例串行执行，成功/失败后的默认冷却为 60 秒；429/418 遵循不低于 60 秒的整数 `Retry-After`，失败时不立即重试。
 - 先完整获取并校验快照，再用同一事务更新合约与 `collector_checkpoint`。相同标的复用 ID 和创建时间；新增合约插入，已有合约更新精度与状态。
 - 成功快照未包含的已有合约保留，标记本地状态 `NOT_IN_SNAPSHOT`，不推断交易所已下架；后续重新出现可恢复来源状态。
@@ -117,7 +138,17 @@ curl -X POST -H 'X-AI2B-Action: sync-instruments' \
   http://127.0.0.1:8080/api/v1/instruments/sync
 ```
 
-该模块复用 V1 的两张基础表，无需 V2，无需重新建库。
+合约元数据模块复用 V1 的两张基础表；K 线模块通过 V2 新增 `market_kline`，无需重新建库。
+
+## 闭合 K 线与图表
+
+本阶段仅处理 BTCUSDT、ETHUSDT 的 Binance USD-M 永续合约闭合 1m K 线。首次补录最近 24 小时；此后每 15 秒检查，从持久化连续检查点续采，保留历史数据。任务异步执行，每页最多 499 根、每轮最多四页；更长停机后的补录分轮完成。失败退避并显示原因，不用模拟行情填补缺口。
+
+详情页支持 1 / 6 / 24 小时区间，显示蜡烛图、基础资产成交量、精确数值与缺失分钟。查询只读数据库；手动补录按钮提交后台任务。dev YAML 的 `market.klines.enabled: false` 仅关闭自动采集。接口、数据口径、事务与恢复语义详见 [K 线采集与接口](KLINES.md)。
+
+## OI、资金费率与多空比
+
+BTC / ETH 详情页已接入六类指标，每项约五分钟采集一次，保存最近 24h 范围的来源记录并保留更早已存历史。OI 数量与名义价值、费率快照与已结算费率、账户比与持仓比分开展示。需要 Key 的请求只发送到币安官方地址；错误、完整度与数据时间按指标独立展示。API 为 GET `/api/v1/instruments/{symbol}/metrics` 与异步 POST `/metrics/sync`，详细口径、恢复范围和限制见 [市场指标说明](METRICS.md)。
 
 ## 构建与测试
 
@@ -131,25 +162,46 @@ npm test
 npm run build
 ```
 
-后端自动化测试使用本地 H2（MySQL 模式），覆盖 DB_* 且禁用自动同步，不连接远程库或交易所。HTTP 适配器使用本地 HTTP fixture 验证路径、响应解析与限流；集成测试验证幂等、状态更新、缺失保留、事务回滚、精度、分页和输入校验。前端覆盖连接状态、列表、筛选分页、精度字符串、同步成功/失败、超时和卸载取消。
+后端自动化测试启用 `test` profile，使用本地 H2（MySQL 模式），不加载 dev YAML，覆盖公共数据源配置且禁用自动同步与采集，不连接远程库或交易所。HTTP 适配器使用本地 HTTP fixture 验证路径、响应解析与限流；集成测试验证幂等、状态更新、缺失保留、事务回滚、精度、分页和输入校验。K 线测试另覆盖闭合过滤、稀疏页、连续检查点、重启恢复、共享退避、单任务调度与时钟偏差。前端覆盖连接状态、列表、筛选分页、精度字符串、图表缺口、方向键查看、区间切换、同步成功/失败、轮询、超时和卸载取消。
 
-产物：`backend/target/crypto-intelligence-backend-0.1.0-SNAPSHOT.jar`、`frontend/dist/`，均忽略。运行 jar 时需自行注入环境变量。浏览器检查记录与截图位于忽略的 `output/playwright/`、`.playwright-cli/`。
+产物：`backend/target/crypto-intelligence-backend-0.1.0-SNAPSHOT.jar`、`frontend/dist/`，均忽略。普通构建的开发 JAR 默认使用 dev；生产打包必须使用下面的 `-Pprod clean package`，并在运行时显式启用 prod。浏览器检查记录与截图位于忽略的 `output/playwright/`、`.playwright-cli/`。
+
+## 生产配置与打包
+
+在 `src/main/resources/application-prod.yml` 中维护生产配置，当前数据库与币安配置保留环境变量占位符，部署时提供生产值。生产启动显式使用 `prod`，不会同时加载 dev。本机测试凭据仅保存在 `application-dev.yml`。
+
+```bash
+# 仓库根目录；重新构建并从生产 JAR 排除 dev 配置
+mvn -B -ntp -f backend/pom.xml -Pprod clean package
+java -jar backend/target/crypto-intelligence-backend-0.1.0-SNAPSHOT.jar --spring.profiles.active=prod
+```
+
+Maven 的 `-Pprod` 控制打包时排除 dev 配置，Spring 的 `--spring.profiles.active=prod` 控制运行时选择生产配置。生产凭据未配置时不会使用本地测试库。
+
+## 配置验证（2026-11-28，Mac）
+
+配置统一放在 `src/main/resources`。未指定 profile 且清除数据库、币安环境变量后，启动成功使用默认 dev，数据库健康 UP。后端 55 项测试通过，测试仍使用 test profile 和 H2。`-Pprod clean package` 构建成功，检查生产 JAR 确认包含 prod 配置、不含 dev YAML 或真实测试凭据。旧 `backend/config` 目录已移除。
 
 ## 验证记录（2026-11-27，Mac）
 
 | 检查 | 结果 |
 | --- | --- |
-| 后端构建与打包 | JDK 21 / Maven 3.8.9，20 项测试通过，`verify` 成功 |
-| 前端测试与构建 | Node 26.5.0，23 项测试通过，类型检查与生产构建通过 |
-| 真实 MySQL 启动 | HikariCP 连接成功，Flyway V1 checksum 校验通过，无待应用迁移 |
+| 后端构建与打包 | JDK 21 / Maven 3.8.9，55 项测试通过，`verify` 成功 |
+| 前端测试与构建 | Node 26.5.0，53 项测试通过，类型检查与生产构建通过 |
+| 真实 MySQL 启动 | HikariCP 连接成功，Flyway V1 / V2 校验与 V3 迁移成功 |
 | 实际 HTTP 健康检查 | `/api/v1/health` 与 `/actuator/health` 均 200 / UP |
 | 真实 Binance 同步 | 通过后端 Java HttpClient 获取并写入 659 个 USDT 永续合约；数量随交易所变化 |
 | 列表与校验接口 | 返回实际合约、分页与检查点；size=201 返回 400 |
 | MySQL 连接参数实测 | MySQL 8.0.27、TLS_AES_256_GCM_SHA384、会话时区 +00:00；659 个标的均唯一 |
 | 浏览器实际联调 | 桌面与 390px 移动端显示正常；真实库搜索/状态筛选正常，451 失败时保留已存合约 |
+| 真实 K 线补录 | BTC / ETH 最近 24 小时窗口各 1,440 根闭合 K 线，零缺口；后续分钟自动补入 |
+| 重启续采 | 两个标的的初始覆盖时间保持不变，连续检查点继续前移，窗口保持完整 |
+| K 线浏览器交互 | BTC 1h / 24h 与 ETH 切换正常；手动提交成功及冷却提示均验证；390px 页面无横向溢出，图表可单独横向滚动 |
+| 真实市场指标 | BTC / ETH 六类指标均已入库；OI 与三种多空比各 288 点、零缺口，已结算费率各三条；两个大户接口鉴权成功 |
+| 指标恢复与页面 | 重启后原始记录保留、新五分钟样本与费率快照自动补入；桌面、390px 手机、结算记录展开与币种切换通过 |
 
 已验证真实请求成功并写入数据；独立探测和后续后台请求也出现过 HTTP 451，当前交易所访问存在不稳定性，尚不能保证持续成功同步。失败后已有 659 条数据和成功检查点保持不变，页面显示错误。不根据单次成功推断网络问题已解决，不切换模拟行情。此前 Windows 下的 NIO 启动问题为历史环境记录，当前 Mac 实际 HTTP 启动已验证。
 
 ## 下一步
 
-在现有合约列表上，先针对 BTCUSDT、ETHUSDT 实现闭合 1m K 线落库、有限历史补录与缺口恢复，再实现 5m 价格异动规则、事件中心和 mock 通知。认证应在开放远程访问及配置写接口前补齐。
+基于完整闭合 K 线实现 5m 价格异动规则、事件中心和 mock 通知。规则须在缺口或样本不足时返回 UNKNOWN，历史补录默认不发送实时通知；事件与通知去重并支持重启恢复。认证应在开放远程访问及配置写接口前补齐。

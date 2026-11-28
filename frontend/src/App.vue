@@ -1,8 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import InstrumentList from './components/InstrumentList.vue'
+import KlineDetail from './components/KlineDetail.vue'
+import type { MarketSymbol } from './api/klines'
 import { getHealth } from './api/health'
 import type { HealthResponse } from './api/health'
+
+const route = ref(window.location.hash)
+const selectedSymbol = computed<MarketSymbol | null>(() => {
+  const match = /^#\/market\/(BTCUSDT|ETHUSDT)$/.exec(route.value)
+  return match ? match[1] as MarketSymbol : null
+})
+function updateRoute() { route.value = window.location.hash }
 
 const state = ref<'loading' | 'ready' | 'error'>('loading')
 const health = ref<HealthResponse | null>(null)
@@ -43,8 +52,9 @@ async function checkBackend() {
   }
 }
 
-onMounted(checkBackend)
+onMounted(() => { checkBackend(); window.addEventListener('hashchange', updateRoute) })
 onUnmounted(() => {
+  window.removeEventListener('hashchange', updateRoute)
   disposed = true
   controller?.abort()
 })
@@ -53,17 +63,19 @@ onUnmounted(() => {
 <template>
   <main class="shell">
     <header class="topbar">
-      <a class="brand" href="/" aria-label="Crypto Intelligence 首页">
+      <a class="brand" href="#/" aria-label="Crypto Intelligence 首页">
         <span class="brand-mark" aria-hidden="true">CI</span>
         <span>Crypto Intelligence<small>ai2b · 市场情报工作台</small></span>
       </a>
-      <span class="tag">合约基础信息</span>
+      <span class="tag">市场数据</span>
     </header>
 
+    <KlineDetail v-if="selectedSymbol" :key="selectedSymbol" :symbol="selectedSymbol" />
+    <template v-else>
     <section class="intro">
       <p class="eyebrow">MARKET INTELLIGENCE</p>
       <h1>重要信息，主动找到你。</h1>
-      <p class="intro-copy">加密货币市场监控、预警与分析平台。已接入合约基础信息同步，行情与预警能力将在后续阶段接入。</p>
+      <p class="intro-copy">加密货币市场监控、预警与分析平台。已接入合约信息与 BTC / ETH 闭合 K 线采集，预警能力将在后续阶段接入。</p>
     </section>
 
     <section class="panel" aria-labelledby="connection-title">
@@ -88,6 +100,7 @@ onUnmounted(() => {
       <p class="note">仅检测应用可用性，不代表行情采集、数据库或通知渠道已连接。</p>
     </section>
 
+    <nav class="market-nav" aria-label="重点合约"><span>重点观察 · 闭合 1m K 线</span><a href="#/market/BTCUSDT">BTCUSDT ↗</a><a href="#/market/ETHUSDT">ETHUSDT ↗</a></nav>
     <InstrumentList />
 
     <section class="features" aria-label="规划能力">
@@ -95,6 +108,7 @@ onUnmounted(() => {
       <article class="feature"><span class="feature-number">02</span><h2>规则预警</h2><p>可解释信号、事件与证据追踪</p><span class="planned">待实现</span></article>
       <article class="feature"><span class="feature-number">03</span><h2>研究分析</h2><p>历史信号、现货与链上数据</p><span class="planned">待实现</span></article>
     </section>
+    </template>
     <footer>仅供市场观察与研究 · 不包含自动下单或真实资金管理</footer>
   </main>
 </template>

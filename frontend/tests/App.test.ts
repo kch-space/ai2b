@@ -13,6 +13,7 @@ let wrapper: VueWrapper | undefined
 afterEach(() => {
   wrapper?.unmount()
   wrapper = undefined
+  window.history.replaceState(null, '', '/')
   vi.unstubAllGlobals()
   vi.useRealTimers()
 })
@@ -74,4 +75,15 @@ describe('application home', () => {
     wrapper = undefined
     expect(signal?.aborted).toBe(true)
   })
+  it('opens supported detail routes and returns to the list', async () => {
+    window.history.replaceState(null, '', '/#/market/BTCUSDT')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(fixture))))
+    wrapper = mount(App, { global: { stubs: { InstrumentList: true, KlineDetail: true } } })
+    expect(wrapper.findComponent({ name: 'KlineDetail' }).props('symbol')).toBe('BTCUSDT')
+    window.history.replaceState(null, '', '/#/')
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'InstrumentList' }).exists()).toBe(true)
+  })
+
 })

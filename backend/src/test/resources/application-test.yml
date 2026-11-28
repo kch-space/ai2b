@@ -10,3 +10,9 @@ market:
   instruments:
     sync-enabled: false
     cooldown-seconds: 0
+
+  klines:
+    enabled: false
+    cooldown-seconds: 0
+  metrics:
+    enabled: false

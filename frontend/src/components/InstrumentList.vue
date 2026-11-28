@@ -133,7 +133,7 @@ onUnmounted(() => {
         <table>
           <caption class="sr-only">Binance USDT 永续合约基础信息</caption>
           <thead><tr><th scope="col">合约 / 基础资产</th><th scope="col">状态</th><th scope="col">价格步长（USDT）</th><th scope="col">数量步长（基础资产）</th><th scope="col">更新时间（UTC+8）</th></tr></thead>
-          <tbody><tr v-for="item in result.items" :key="item.id"><td><strong class="mono">{{ item.symbol }}</strong><small class="asset">{{ item.baseAsset }} / {{ item.quoteAsset }}</small></td><td><span class="contract-status" :class="{ trading: item.status === 'TRADING' }">{{ statusText(item.status) }}</span></td><td class="mono">{{ item.priceTickSize }}</td><td class="mono">{{ item.quantityStepSize }}</td><td>{{ formatTime(item.updatedAt) }}</td></tr></tbody>
+          <tbody><tr v-for="item in result.items" :key="item.id"><td><a v-if="['BTCUSDT', 'ETHUSDT'].includes(item.symbol)" class="symbol-link mono" :href="`#/market/${item.symbol}`">{{ item.symbol }} ↗</a><strong v-else class="mono">{{ item.symbol }}</strong><small class="asset">{{ item.baseAsset }} / {{ item.quoteAsset }}</small></td><td><span class="contract-status" :class="{ trading: item.status === 'TRADING' }">{{ statusText(item.status) }}</span></td><td class="mono">{{ item.priceTickSize }}</td><td class="mono">{{ item.quantityStepSize }}</td><td>{{ formatTime(item.updatedAt) }}</td></tr></tbody>
         </table>
       </div>
       <div class="pagination"><span>共 {{ result.total }} 个合约 · 第 {{ page }} / {{ pages }} 页</span><div><button aria-label="上一页" :disabled="loading || page <= 1" @click="changePage(page - 1)">上一页</button><button aria-label="下一页" :disabled="loading || page >= pages" @click="changePage(page + 1)">下一页</button></div></div>
