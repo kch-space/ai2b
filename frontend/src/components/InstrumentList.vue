@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getInstruments, syncInstruments } from '../api/instruments'
+import { readPreferences } from '../settings/preferences'
 import type { InstrumentPage, SyncStatus } from '../api/instruments'
 
 const result = ref<InstrumentPage | null>(null)
@@ -8,6 +9,7 @@ const sync = ref<SyncStatus | null>(null)
 const keyword = ref('')
 const status = ref('')
 const page = ref(1)
+const pageSize = ref<number>(readPreferences().marketPageSize)
 const loading = ref(false)
 const syncing = ref(false)
 const error = ref('')
@@ -45,7 +47,7 @@ async function load(targetPage = 1) {
   const search = keyword.value.trim()
   const selectedStatus = status.value
   try {
-    const data = await getInstruments(search, selectedStatus, targetPage, current.signal)
+    const data = await getInstruments(search, selectedStatus, targetPage, current.signal, pageSize.value)
     if (disposed || listController !== current) return
     result.value = data
     page.value = data.page
@@ -112,7 +114,7 @@ onUnmounted(() => {
         {{ syncing || sync?.running ? '同步中…' : '同步合约' }}
       </button>
     </div>
-    <p class="note">Binance USDⓈ-M · 合约基础信息；价格步长与数量步长是下单精度，不是实时行情。</p>
+    <p class="note">精简分页展示，可选择每页 10 / 25 / 50 条。仅 BTC / ETH 已接入行情，其余为合约基础信息；价格步长与数量步长是下单精度，不是实时行情。</p>
     <div class="sync-meta" role="status" aria-live="polite">
       <span>最近成功同步（UTC+8）：{{ sync ? formatTime(sync.lastSuccessAt) : loading ? '读取中…' : '暂不可用' }}</span>
       <span v-if="sync?.running" class="tag">后台同步中</span>
@@ -123,6 +125,7 @@ onUnmounted(() => {
     <form class="filters" @submit.prevent="load(1)">
       <label>合约搜索<input v-model="keyword" maxlength="64" placeholder="例如 BTCUSDT" autocomplete="off" /></label>
       <label>交易状态<select v-model="status"><option value="">全部状态</option><option value="TRADING">交易中</option><option value="PENDING_TRADING">待上线</option><option value="SETTLING">结算中</option><option value="NOT_IN_SNAPSHOT">本次快照未包含</option></select></label>
+      <label>每页数量<select v-model.number="pageSize" @change="load(1)" aria-label="每页数量"><option :value="10">10 条</option><option :value="25">25 条</option><option :value="50">50 条</option></select></label>
       <button type="submit" :disabled="loading">{{ loading ? '查询中…' : '查询 / 刷新' }}</button>
     </form>
     <p v-if="error" class="error" role="alert">{{ error }}</p>

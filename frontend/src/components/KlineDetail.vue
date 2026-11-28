@@ -88,7 +88,7 @@ onUnmounted(() => {
 
 <template>
   <section class="market-detail" aria-labelledby="detail-title">
-    <a class="back-link" href="#/">← 返回合约列表</a>
+    <a class="back-link" href="#/markets">← 返回合约列表</a>
     <div class="detail-heading"><div><p class="eyebrow">MARKET OBSERVATION</p><h1 id="detail-title">{{ symbol }} <span>永续合约</span></h1><p class="note">Binance USDⓈ-M · 1 分钟闭合 K 线 · Asia/Shanghai</p></div><nav aria-label="切换合约"><a :class="{ active: symbol === 'BTCUSDT' }" href="#/market/BTCUSDT">BTC</a><a :class="{ active: symbol === 'ETHUSDT' }" href="#/market/ETHUSDT">ETH</a></nav></div>
     <div class="panel market-panel">
       <div class="panel-heading"><div><p class="eyebrow">CLOSED CANDLES</p><h2>价格与成交量</h2></div><div class="detail-actions"><button data-testid="refresh-klines" :disabled="loading" @click="load()">{{ loading ? '读取中…' : '刷新' }}</button><button data-testid="collect-klines" :disabled="starting || data?.collector.running" @click="collect">{{ starting || data?.collector.running ? '采集中…' : '补录 / 继续采集' }}</button></div></div>
@@ -107,7 +107,7 @@ onUnmounted(() => {
         <details v-if="recent.length" class="gap-details"><summary>最近 {{ recent.length }} 根 K 线原始值</summary><div class="table-scroll"><table><thead><tr><th>开盘时间（UTC+8）</th><th>开</th><th>高</th><th>低</th><th>收</th><th>报价成交额（USDT）</th></tr></thead><tbody><tr v-for="item in recent" :key="item.openTime"><td>{{ formatTime(item.openTime) }}</td><td>{{ item.open }}</td><td>{{ item.high }}</td><td>{{ item.low }}</td><td>{{ item.close }}</td><td>{{ item.quoteVolume }}</td></tr></tbody></table></div></details>
       </template>
     </div>
-    <p class="note">首次补录最近 24 小时；之后从连续检查点续采。缺口与未闭合数据不会用于生成完整窗口。本阶段尚未接入预警规则。</p>
+    <p class="note">首次补录最近 24 小时；之后从连续检查点续采。缺口与未闭合数据不会用于生成完整窗口。已接入 5m 价格规则；首次补录、缺口与陈旧数据不触发实时预警。</p>
     <MarketMetrics :key="symbol" :symbol="symbol" />
   </section>
 </template>

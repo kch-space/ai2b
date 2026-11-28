@@ -16,3 +16,5 @@ market:
     cooldown-seconds: 0
   metrics:
     enabled: false
+  alerts:
+    enabled: false

@@ -4,9 +4,9 @@
 
 > [返回项目介绍](../README.md)
 >
-> 文档版本：v0.3 · 更新日期：2026-11-27 · 状态：基础工程、合约元数据、BTC/ETH 闭合 K 线、OI / 费率 / 多空比分布已实现，其余业务设计待实施
+> 文档版本：v0.5 · 更新日期：2026-11-28 · 状态：基础工程、合约元数据、BTC/ETH 闭合 K 线、OI / 费率 / 多空比分布已实现，M1 价格预警 / 事件 / mock 通知，以及 Telegram / 手动 AI 研究已实现，其余业务设计待实施
 >
-> 本文依据提供的 `crypto-intelligence-design.md` 整理。当前已创建 backend 与 frontend 基础工程、健康连接检测、MySQL/Flyway V1 / V2 / V3、Binance 合约元数据同步与列表页，以及 BTCUSDT / ETHUSDT 闭合 1m K 线、OI、资金费率与三种多空比采集、持久化与详情图表。具体实现见 [K 线说明](KLINES.md) 与 [市场指标](METRICS.md)；以下其余业务模块、接口、数据表与部署方式仍为规划，不代表已有功能。参考文档中的代理执行指令不构成本次实施授权。
+> 本文依据提供的 `crypto-intelligence-design.md` 整理。当前已创建 backend 与 frontend 基础工程、健康连接检测、MySQL/Flyway V1 / V2 / V3、Binance 合约元数据同步与列表页，以及 BTCUSDT / ETHUSDT 闭合 1m K 线、OI、资金费率与三种多空比采集、持久化与详情图表。具体实现见 [K 线说明](KLINES.md) 与 [市场指标](METRICS.md)；M1 还包含 V4、固定价格规则版本、事件/history/outbox 与 mock 通知，详见 [价格预警](ALERTS.md)；V5 已实现加密配置、Telegram 与手动 AI 研究，见 [集成说明](INTEGRATIONS.md)。代码实现不等于真实服务商或生产验收通过；以下未注明实现的业务模块、接口、数据表与部署方式仍为规划，不代表已有功能。参考文档中的代理执行指令不构成本次实施授权。
 
 ## 1. 项目定位
 
@@ -38,6 +38,8 @@
 
 采用 **模块化单体 + 独立前端 + MySQL**。首期不引入微服务、消息队列或 Kubernetes，以降低单用户部署和排障成本。
 
+下表是选型建议，不是当前依赖清单。实际使用 Java 21 / Spring Boot 3.5.16、Spring MVC、JdbcTemplate 与 Flyway；行情请求为 Java HttpClient，Telegram/AI 为受地址和 DNS 策略限制的 OkHttp。前端为 Vue 3 / TypeScript / Vite 与原生 SVG。完整认证、MyBatis-Plus、Pinia、Ant Design Vue、ECharts、Redis 与 WebSocket 尚未接入。
+
 | 层次 | 建议技术 | 设计理由 |
 | --- | --- | --- |
 | 后端 | Java 21、兼容且仍维护的 Spring Boot 3.x、Maven | 类型化领域逻辑、成熟事务与监控体系；版本实施前核实 |
@@ -51,6 +53,8 @@
 | 扩展 | 通知适配器、链上适配器、可选 LangChain4j | 与核心规则解耦，按阶段启用 |
 
 ### 3.2 数据流
+
+以下为目标数据流；WebSocket、历史统计/回测与自动异步分析仍为规划。当前采集通过 REST 写入数据库与检查点，规则读取有效实时窗口，AI 仅由用户手动确认调用。
 
 ```mermaid
 flowchart TD
@@ -72,7 +76,7 @@ REST/WS 只出现在采集层；规则不直接处理交易所 JSON，不直接�
 
 ### 3.3 建议代码组织
 
-以下为未来模块化代码组织方案。当前 backend 为单 Maven 模块，frontend 为 Vue 工程（含合约列表与 K 线详情）；业务模块按闭环需要逐步建立，不生成占位空壳。
+以下为未来模块化代码组织方案。当前 backend 为单 Maven 模块，按 health / instrument / kline / metrics / alert / integration package 组织；frontend 已有概览、市场、详情、事件与设置；业务模块按闭环需要逐步建立，不生成占位空壳。
 
 ```text
 ai2b/
@@ -87,7 +91,7 @@ ai2b/
 ├── frontend/               # Vue Web 后台
 ├── deploy/                 # 后续 Compose / Nginx / 环境变量样例
 ├── docs/
-│   └── DESIGN.md           # 项目设计方案；其他工程文档后续补充
+│   └── DESIGN.md           # 项目设计方案；另有开发、接口、集成与路线图文档
 └── README.md
 ```
 
@@ -193,19 +197,21 @@ ai2b/
 ### 7.2 渠道与可靠性
 
 - 预警严重级别：P0 紧急优先、P1 实时、P2 默认 30 分钟汇总、P3 仅记录；P0/P1 不等待 AI。
-- Worker 用行锁/租约领取任务，网络发送在事务外执行；成功记录消息 ID，失败指数退避，租约过期可回收，重试耗尽进入 DEAD。
-- 区分 429、5xx、超时和 401/403；永久权限错误进入人工处理。人工重试记录操作，不覆盖原错误链路。
-- Telegram 是原方案的候选渠道，使用 HTTPS sendMessage、白名单接收人、文本转义与长度限制；token 仅服务端环境变量/secrets 提供，不入库或日志。
-- Telegram 缺少通用发送幂等键：超时重试可能重复送达，采用“至少一次尝试发送 + 事件 ID 可追溯”，不承诺 exactly-once 或一定送达。
-- **安全边界：** Telegram 仅可设计为发送公开市场行情摘要，启用前须确认符合企业策略；禁止发送公司内部数据、文件、目录、凭据或内部链接。企业内部通知使用经授权的钉钉渠道。本次不绑定账号、不发送消息、不上传任何内容。
+- 当前有 MOCK 与 Telegram 两个独立 worker，使用行锁/租约领取任务，发送在事务外执行。MOCK 过期租约可回收；Telegram 429 明确拒绝可重试，网络/超时/5xx 结果未知或真实发送租约过期进入 DEAD，不盲目自动重发。
+- 配置停用/版本改变取消旧 Telegram 任务；DEAD 需人工核对，目前尚无人工重试接口。未来人工重试须确认并保留原错误链。
+- Telegram 已使用固定 HTTPS sendMessage、配置的 Chat ID、文本与长度限制。Token 由后端 AES-GCM 加密入库，主密钥单独保管，接口不回传明文，日志不记录 Token。
+- Telegram 缺少通用发送幂等键，不承诺 exactly-once 或一定送达；SENT 仅表示服务商明确接受。启用 Telegram 后仍创建 MOCK，不自动隐藏或删除模拟历史。见 [集成说明](INTEGRATIONS.md)。
+- **安全边界：** Telegram 仅用于发送公开市场行情摘要，启用前须确认符合企业策略；禁止发送公司内部数据、文件、目录、凭据或内部链接。企业内部通知使用经授权的钉钉渠道。本次不绑定账号、不发送消息、不上传任何内容。
 
 ## 8. Web 与 API 设计
 
-页面包含市场总览、行情中心、币种详情、自选、预警中心、规则配置、通知日志/设置和系统监控。桌面优先、移动端适配，支持深浅主题与暂停实时排序；数据陈旧、缺失、空数据和错误态必须可见。
+当前已实现深色工作空间：概览只显示 BTC/ETH 两张重点卡片和最多四条活动预警；全量合约元数据放独立市场页，默认每页 10 条，可选 25/50；另有详情、事件与显示/Telegram/AI/系统设置。自选、规则编辑、完整系统监控、主题切换与暂停实时排序仍为规划。缺失、陈旧、空数据与失败必须可见，不用模拟行情兜底。
 
-MVP 使用 5–15 秒 REST 轮询，后续评估 SSE。列表服务端分页，图表限制时间区间与点数，不将全部历史加载到浏览器。
+当前使用 REST 轮询：概览 15/30/60 秒（默认 30），K 线约 15 秒、市场指标约 30 秒、事件页约 10 秒；任务运行时部分详情请求约 3 秒。后续再评估 SSE。列表服务端分页，图表限制时间区间与点数，不将全部历史加载到浏览器。
 
-API 前缀统一 `/api/v1`，响应含 requestId；错误使用明确 HTTP 状态及业务码。page 从 1 开始，size 最大 200；排序字段白名单、输入校验和写操作认证。
+API 前缀统一 `/api/v1`，响应含 requestId；错误使用明确 HTTP 状态及业务码。分页参数与上限以实际接口文档为准（事件 pageSize 最大 100）。集成写操作有本机来源、确认、版本与审计保护，但完整用户认证尚未实现。
+
+**下表是目标 API 规划，不是当前接口契约。** 实际地址见表后的实现清单与对应说明。
 
 | 方法 | 相对路径 | 功能 |
 | --- | --- | --- |
@@ -222,7 +228,7 @@ API 前缀统一 `/api/v1`，响应含 requestId；错误使用明确 HTTP 状�
 | GET | `/system/collectors` | 采集健康、延迟与缺口 |
 | POST / GET | `/analysis/reports`、`/analysis/reports/{id}` | P2 异步报告创建与查询 |
 
-上表已实现 GET /instruments，并补充 POST /instruments/sync。K 线实际以 symbol 寻址：GET /instruments/{symbol}/klines?hours=6 与异步 POST /instruments/{symbol}/klines/sync，仅支持 BTCUSDT / ETHUSDT；详见 [K 线接口](KLINES.md)。另已实现 GET /instruments/{symbol}/metrics 和异步 POST /instruments/{symbol}/metrics/sync，口径与范围见 [市场指标](METRICS.md)。其余业务接口未实现。另提供 /api/v1/health 与 /actuator/health 健康接口。实施业务时生成 OpenAPI，并为规则与通知等配置写操作设计二次确认和审计。
+另已实现 GET /alerts/rules、GET /alerts/events 及 GET /alerts/events/{uuid}，详见 [价格预警](ALERTS.md)。上表已实现 GET /instruments，并补充 POST /instruments/sync。K 线实际以 symbol 寻址：GET /instruments/{symbol}/klines?hours=6 与异步 POST /instruments/{symbol}/klines/sync，仅支持 BTCUSDT / ETHUSDT；详见 [K 线接口](KLINES.md)。另已实现 GET /instruments/{symbol}/metrics 和异步 POST /instruments/{symbol}/metrics/sync，口径与范围见 [市场指标](METRICS.md)。Telegram/AI 配置、测试、手动事件研究与报告查询已通过 `/api/v1/integrations` 接入，见 [集成 API](INTEGRATIONS.md)。上述自选、规则编辑、独立通知管理/人工重试、系统监控及异步报告 API 尚未实现；首页聚合现有只读接口，没有独立 `/market/overview` 实现。另提供 /api/v1/health 与 /actuator/health。OpenAPI 生成仍待补充；集成配置已支持二次确认和审计。
 
 ## 9. 扩展分析与安全运行
 
@@ -230,28 +236,28 @@ API 前缀统一 `/api/v1`，响应含 requestId；错误使用明确 HTTP 状�
 
 - 链上采集需确认区块游标、decimals、确认数、重组回滚、初始余额来源和标签可信度。交易所流入不等于卖出，未知地址不默认巨鲸，无法验证初始余额时不输出全量持币排名。
 - 低位吸筹/高位分发只能作为带证据的假设；缺少链上或可验证买卖证据时仅显示市场候选。
-- AI 可选且异步：只接经授权的本地或企业内部服务，不向第三方公网模型上传数据。输入为结构化证据，输出 summary、observations、hypotheses、counterEvidence、risks、missingData、watchItems；失败保留规则摘要。
+- 当前 AI 为手动确认的 OpenAI-compatible 调用，默认公网白名单 api.openai.com，也可按后端策略接入其他授权提供方或显式开启本机模型。只发送选定事件的公开市场证据，禁止发送内部数据、文件或凭据；企业策略不允许公网调用时保持关闭。自动异步分析及结构化报告字段仍为规划；AI 失败不影响规则与通知。
 - 历史统计使用首次触发时可见的数据，观察后续 1h/24h/3d/7d 收益与最大有利/不利变动；标注样本量与未成熟样本，避免未来数据、幸存者偏差和重复样本膨胀。
 
 ### 9.2 部署与监控规划
 
 - Compose 规划包含 backend、frontend/nginx、MySQL，Redis 按需；数据库与缓存不对公网暴露，Web 默认本地/受控内网，不在本次公网部署。
-- 本地使用 Git 忽略的 `backend/src/main/resources/application-dev.yml` 保存数据库和币安配置，同目录 `.example` 仅提供占位符；公共配置默认使用 dev，`application-prod.yml` 为生产配置。`-Pprod clean package` 排除本地 dev 文件，生产运行显式激活 prod，并注入生产配置；未来通知与历史保留等配置也只提交占位符。
+- 本地使用 Git 忽略的 `backend/src/main/resources/application-dev.yml` 保存数据库和币安配置，同目录 `.example` 仅提供占位符；公共配置默认使用 dev，`application-prod.yml` 为生产配置。`-Pprod clean package` 排除本地 dev 文件，生产运行显式激活 prod，并注入生产配置；生产还必须注入稳定的 AI2B_MASTER_KEY，数据库与主密钥分别备份；Git 仅提交凭据占位符。历史保留策略仍待开发。
 - 公开行情不需要交易密钥。单用户认证采用安全密码哈希，日志脱敏，备份/恢复及配置修改流程需可审计。
 - 监控 WS 重连、采集延迟、限流、缺口、队列积压、规则耗时、outbox 年龄、通知失败、磁盘和连接池；无数据不能显示健康正常。
 - 通知渠道故障在 Web 可见；单渠道不可用时无法保证实时送达，恢复后按策略重试。
 
 ## 10. 实施里程碑与验收
 
-本节仅规划后续工作，不触发代码生成、配置变更或外部调用。
+下表同时记录目标与当前状态，不触发配置变更或外部调用。后续顺序及依赖见 [路线图](ROADMAP.md)。
 
-| 里程碑 | 任务 | 完成标准 |
+| 里程碑 | 目标 / 完成标准 | 当前状态 |
 | --- | --- | --- |
-| M0 工程基座 | 核实依赖/API；建立后端、前端、迁移、认证与健康检查 | 构建、测试、数据库迁移与本地启动可验证 |
-| M1 最小闭环 | 元数据、1m K 线、5m 价格规则、事件/outbox、Web 事件页、通知 mock | 固定模拟急跌触发正确事件，重复输入不重复建事件；升级、恢复、重启正常 |
-| M2 P0 完整 | ticker、OI、费率、多空比、自选、规则版本、页面与可靠通知 | 数据缺失可见，断线补齐、限流、重试与错误态通过验证 |
-| M3 质量与运行 | 集成测试、模拟压力测试、部署与 API 文档、备份恢复说明 | P0 验收清单通过，记录实际结果与未验证项 |
-| M4 扩展 | 按授权与数据可用性推进 P1，再推进 P2 | 新模块不破坏 P0，证据/成本/安全边界清晰 |
+| M0 工程基座 | 工程、迁移、认证与健康检查可验证 | 构建/健康/迁移代码已具备；完整认证及真实 V4/V5 验收未完成 |
+| M1 最小闭环 | 元数据、闭合 K 线、价格规则、事件/outbox、Web、mock；去重/升级/恢复/重启正确 | 代码与自动测试已具备；长期真实预警仍待验证 |
+| M2 P0 完整 | ticker、OI/费率/多空比、自选、规则版本与可靠通知 | 部分完成：指标、固定版本、页面与 Telegram；ticker、自选、规则编辑及其他规则待开发 |
+| M3 质量与运行 | 压测、部署/API 文档、备份恢复与完整 P0 验收 | 已有自动测试与本地联调；真实集成、压力/延迟、恢复与部署验收待完成 |
+| M4 扩展 | 按授权推进 P1/P2，不破坏 P0，证据/成本/安全边界清晰 | 提前实现手动 AI 测试/报告子集，不代表自动 AI、Bot、链上或回测已交付 |
 
 ### P0 验收清单
 
@@ -259,7 +265,7 @@ API 前缀统一 `/api/v1`，响应含 requestId；错误使用明确 HTTP 状�
 - [ ] 新增/下架标的、重复/乱序/迟到消息、断线重连与历史缺口补偿正确。
 - [ ] 价格、RVOL、OI、资金费率的精度、单位、窗口边界与 UNKNOWN 行为单测通过。
 - [ ] 模拟价格急跌验证 P0、并发去重、冷却、升级、恢复、新事件及规则版本追溯。
-- [ ] 事件/history/outbox 事务原子性、任务租约回收、失败重试、DEAD 与重启恢复通过集成测试。
+- [ ] 事件/history/outbox 事务原子性、MOCK 租约回收、Telegram 未知结果不重发、明确拒绝重试、DEAD 与重启恢复通过集成测试。
 - [ ] 历史补录和陈旧数据不触发实时误报，缺失数据不导致错误恢复。
 - [ ] Web 页面、认证、参数校验、错误态、分页、前端 typecheck/build 通过验证。
 - [ ] mock 通知明确标记模拟；真实渠道仅经授权后测试，不能把 mock 成功称为真实送达。
@@ -270,14 +276,14 @@ API 前缀统一 `/api/v1`，响应含 requestId；错误使用明确 HTTP 状�
 
 ## 11. 当前状态与待确认事项
 
-**已完成：** 项目说明、设计方案、Spring Boot 后端健康接口、Vue 前端首页与本地联调、MySQL/Flyway V1（标的与采集检查点）、V2（闭合 K 线）、V3（市场指标与同步状态）、Mac 开发脚本、Binance 合约元数据同步与合约列表、BTC/ETH 闭合 1m K 线持续采集与图表、24h 初始补录、缺口恢复、重启续采、OI / 费率 / 三种多空比分布及采集状态、自动化测试。**未实施：** 其他行情类型与币种、规则预警、其余业务表迁移、认证、通知与生产部署。本地启动及验证范围见 [开发说明](DEVELOPMENT.md)，完整业务验收尚未通过。
+**已完成：** 项目说明、设计方案、Spring Boot 后端健康接口、Vue 前端首页与本地联调、MySQL/Flyway V1（标的与采集检查点）、V2（闭合 K 线）、V3（市场指标与同步状态）、Mac 开发脚本、Binance 合约元数据同步与合约列表、BTC/ETH 闭合 1m K 线持续采集与图表、24h 初始补录、缺口恢复、重启续采、OI / 费率 / 三种多空比分布及采集状态、自动化测试。**后续已实现：** M1 5m 价格规则、事件去重/升级/恢复、V4、outbox 租约与重试、mock 通知和事件页；V5 加密集成配置、Telegram 通知、AI 测试与手动事件报告。见 [集成说明](INTEGRATIONS.md)。**未实施：** 其他行情类型与币种、自选、其他规则与规则编辑、完整认证、Bot 查询、自动 AI 与生产部署。本地启动及验证范围见 [开发说明](DEVELOPMENT.md)，完整业务验收尚未通过。最新上一轮快照为后端 83 项、前端 99 项测试及构建通过，使用 H2/模拟 provider/隔离本机 HTTP；真实 MySQL V4/V5、Telegram 送达、外部 AI 与长期运行尚未验证。见 [路线图](ROADMAP.md)。
 
-实施前需确认：
+后续实施前需确认：
 
 1. Java/Spring Boot/前端依赖兼容性及维护状态；数据源连通性、配额、历史范围和地区限制。
 2. 实际币种范围、补录天数、保留容量、机器资源与压测结果。
 3. 合规通知渠道、接收人和允许发送内容；真实消息发送须单独授权。
-4. P1 数据授权与成本、链上初始余额与标签来源；P2 内部模型服务可用性。
+4. P1 数据授权与成本、链上初始余额与标签来源；模型服务可用性、允许的数据范围与费用。
 5. 所有规则阈值、评分权重和性能目标均为初始假设，不是已验证的市场结论。
 
 本系统提供市场观察与风险研究，不构成投资建议或自动交易系统。

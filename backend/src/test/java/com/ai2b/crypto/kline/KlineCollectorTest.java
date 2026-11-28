@@ -121,4 +121,39 @@ class KlineCollectorTest {
         verify(client, never()).fetch(anyString(), any(), any(), any());
         verify(repository, never()).savePage(any(), anyList(), any(), any(), any(), any());
     }
+    @Test
+    void onlyContinuousScheduledBarsAreLiveAndRestartManualCatchupAreNot() {
+        AtomicReference<KlineRepository.Checkpoint> checkpoint = new AtomicReference<>();
+        Instant target = KlineCollector.latestClosedOpen(clock.instant().minusSeconds(2));
+        checkpoint.set(new KlineRepository.Checkpoint(target.minusSeconds(3600), target.minusSeconds(60), clock.instant().minusSeconds(60)));
+        when(repository.checkpoint("BTCUSDT")).thenAnswer(ignored -> Optional.ofNullable(checkpoint.get()));
+        when(client.fetch(eq("BTCUSDT"), any(), any(), any())).thenAnswer(call -> List.of(candle(call.getArgument(1))));
+        org.mockito.stubbing.Answer<Instant> save = call -> {
+            checkpoint.set(new KlineRepository.Checkpoint(call.getArgument(2), call.getArgument(4), clock.instant()));
+            return call.getArgument(4);
+        };
+        when(repository.savePage(any(), anyList(), any(), any(), any(), any())).thenAnswer(save);
+        when(repository.saveLivePage(any(), anyList(), any(), any(), any(), any())).thenAnswer(save);
+        var collector = new KlineCollector(client, repository, Runnable::run, clock, true, 0);
+        collector.scheduledCollect(); // First poll after restart is always non-live.
+        verify(repository, times(1)).savePage(any(), anyList(), any(), any(), any(), any());
+        verify(repository, never()).saveLivePage(any(), anyList(), any(), any(), any(), any());
+        clock.advance(60);
+        collector.scheduledCollect();
+        verify(repository, times(1)).saveLivePage(any(), anyList(), any(), any(), any(), any());
+        clock.advance(60);
+        collector.trigger("BTCUSDT"); // Explicit sync never marks live.
+        verify(repository, times(2)).savePage(any(), anyList(), any(), any(), any(), any());
+        verify(repository, times(1)).saveLivePage(any(), anyList(), any(), any(), any(), any());
+        clock.advance(180);
+        collector.scheduledCollect(); // More than one missing minute is historical catch-up.
+        verify(repository, times(3)).savePage(any(), anyList(), any(), any(), any(), any());
+        verify(repository, times(1)).saveLivePage(any(), anyList(), any(), any(), any(), any());
+        clock.advance(60);
+        var restarted = new KlineCollector(client, repository, Runnable::run, clock, true, 0);
+        restarted.scheduledCollect();
+        verify(repository, times(4)).savePage(any(), anyList(), any(), any(), any(), any());
+        verify(repository, times(1)).saveLivePage(any(), anyList(), any(), any(), any(), any());
+    }
+
 }

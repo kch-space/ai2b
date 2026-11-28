@@ -53,7 +53,19 @@ public class KlineRepository {
     @Transactional
     public Instant savePage(Instrument instrument, List<Kline> candles, Instant coverageStart,
             Instant requestedStart, Instant pageEnd, Instant writtenAt) {
+        return save(instrument, candles, coverageStart, requestedStart, pageEnd, writtenAt, false);
+    }
+
+    @Transactional
+    public Instant saveLivePage(Instrument instrument, List<Kline> candles, Instant coverageStart,
+            Instant requestedStart, Instant pageEnd, Instant writtenAt) {
+        return save(instrument, candles, coverageStart, requestedStart, pageEnd, writtenAt, true);
+    }
+
+    private Instant save(Instrument instrument, List<Kline> candles, Instant coverageStart,
+            Instant requestedStart, Instant pageEnd, Instant writtenAt, boolean live) {
         if (candles.isEmpty()) throw new IllegalArgumentException("Empty page");
+        jdbc.queryForObject("SELECT id FROM instrument WHERE id=? FOR UPDATE", Long.class, instrument.id());
         var existing = new java.util.HashSet<>(jdbc.query("""
                 SELECT open_time FROM market_kline WHERE instrument_id=? AND interval_code='1m'
                 AND open_time BETWEEN ? AND ?
@@ -72,6 +84,11 @@ public class KlineRepository {
                     ps.setBigDecimal(11, candle.takerBuyVolume()); ps.setBigDecimal(12, candle.takerBuyQuoteVolume());
                     ps.setTimestamp(13, Timestamp.from(candle.receivedAt()));
                 });
+        if (live) {
+            for (Kline candle : newRows) jdbc.update("""
+                    INSERT INTO market_kline_live(instrument_id,open_time,observed_at) VALUES (?,?,?)
+                    """, instrument.id(), Timestamp.from(candle.openTime()), Timestamp.from(writtenAt));
+        }
         var allTimes = jdbc.query("""
                 SELECT open_time FROM market_kline WHERE instrument_id=? AND interval_code='1m'
                 AND open_time BETWEEN ? AND ? ORDER BY open_time

@@ -26,7 +26,7 @@ class DatabaseMigrationTest {
 
     @Test
     void migrationIsAppliedAndRepeatRunIsNoOp() {
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("3");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("5");
         flyway.validate();
         assertThat(flyway.migrate().migrationsExecuted).isZero();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM instrument", Long.class)).isZero();

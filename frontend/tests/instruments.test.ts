@@ -104,6 +104,19 @@ describe('instrument list', () => {
     expect(wrapper.get('[role="alert"]').text()).toContain('请求超时')
     expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
   })
+  it('uses compact defaults and supports changing page density', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(response(page)))
+    vi.stubGlobal('fetch', fetchMock)
+    wrapper = mount(InstrumentList)
+    await flushPromises()
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('size=10')
+    await wrapper.get('[aria-label="每页数量"]').setValue('50')
+    await flushPromises()
+    expect(fetchMock.mock.calls.at(-1)?.[0]).toContain('size=50')
+    expect(fetchMock.mock.calls.at(-1)?.[0]).toContain('page=1')
+  })
+
+
 })
 
 describe('instrument API contract', () => {
@@ -117,4 +130,10 @@ describe('instrument API contract', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ sync: {} })))
     await expect(syncInstruments(new AbortController().signal)).rejects.toThrow('格式不正确')
   })
+
+  it('reports HTTP status when a proxy returns an empty response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 502 })))
+    await expect(getInstruments('', '', 1, new AbortController().signal)).rejects.toThrow('HTTP 502')
+  })
+
 })

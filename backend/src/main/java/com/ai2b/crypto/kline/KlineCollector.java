@@ -34,6 +34,7 @@ public class KlineCollector {
         volatile Instant lastAttemptAt;
         volatile Instant nextAllowedAt = Instant.EPOCH;
         int failures;
+        boolean warmed; // First successful collection after every process start is non-live.
     }
     private record Gate(Instant until, String error) { }
     public record Status(String outcome, boolean running, Instant lastAttemptAt, Instant nextAllowedAt,
@@ -70,6 +71,10 @@ public class KlineCollector {
 
     /** Dispatch a bounded job; HTTP callers do not wait for network or historical writes. */
     public Status trigger(String symbol) {
+        return trigger(symbol, false); // Manual sync is always backfill, never real-time input.
+    }
+
+    private Status trigger(String symbol, boolean scheduled) {
         requireSupported(symbol);
         State state = states.computeIfAbsent(symbol, ignored -> new State());
         if (!state.running.compareAndSet(false, true)) throw busy("该合约正在采集中", 1);
@@ -78,7 +83,7 @@ public class KlineCollector {
                     ? state.nextAllowedAt : sourceGate.get().until();
             if (clock.instant().isBefore(until)) throw busy("采集正在退避，请稍后刷新查看", remaining(until));
             state.outcome = "QUEUED";
-            executor.execute(() -> collect(symbol, state));
+            executor.execute(() -> collect(symbol, state, scheduled));
         } catch (RuntimeException exception) {
             state.running.set(false);
             if (exception instanceof KlineException known) throw known;
@@ -89,7 +94,7 @@ public class KlineCollector {
         return status(symbol);
     }
 
-    private void collect(String symbol, State state) {
+    private void collect(String symbol, State state, boolean scheduled) {
         state.lastAttemptAt = clock.instant();
         state.outcome = "RUNNING";
         state.error = null;
@@ -114,16 +119,22 @@ public class KlineCollector {
             Instant start = checkpoint == null ? target.minusMillis((1440L - 1) * Kline.MINUTE) : checkpoint.start();
             Instant cursor = checkpoint == null || checkpoint.contiguousOpen() == null
                     ? start : checkpoint.contiguousOpen().plusMillis(Kline.MINUTE);
+            boolean live = scheduled && state.warmed && checkpoint != null
+                    && target.minusMillis(Kline.MINUTE).equals(checkpoint.contiguousOpen())
+                    && Duration.between(checkpoint.lastWriteAt(), now).abs().compareTo(Duration.ofSeconds(90)) <= 0;
             for (int batch = 0; batch < 4 && !cursor.isAfter(target); batch++) {
                 Instant end = cursor.plusMillis((BinanceKlineClient.PAGE_SIZE - 1L) * Kline.MINUTE);
                 if (end.isAfter(target)) end = target;
                 var candles = client.fetch(symbol, cursor, end, closedBefore);
-                Instant contiguous = repository.savePage(instrument, candles, start, cursor, end, clock.instant());
+                Instant contiguous = live
+                        ? repository.saveLivePage(instrument, candles, start, cursor, end, clock.instant())
+                        : repository.savePage(instrument, candles, start, cursor, end, clock.instant());
                 if (contiguous == null || contiguous.isBefore(end)) {
                     throw new KlineException("DATA_GAP", "采集区间存在缺失分钟，检查点已停在缺口前，将继续补齐", 30);
                 }
                 cursor = contiguous.plusMillis(Kline.MINUTE);
             }
+            state.warmed = cursor.isAfter(target);
             state.outcome = cursor.isAfter(target) ? "SUCCESS" : "CATCHING_UP";
             state.failures = 0;
             state.nextAllowedAt = clock.instant().plusSeconds(cooldownSeconds);
@@ -168,7 +179,7 @@ public class KlineCollector {
     public void scheduledCollect() {
         if (!enabled) return;
         for (String symbol : SYMBOLS) {
-            try { trigger(symbol); }
+            try { trigger(symbol, true); }
             catch (RuntimeException ignored) {
                 // A queued job/cooldown or DB outage must not prevent the other symbol's next attempt.
             }

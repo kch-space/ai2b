@@ -17,3 +17,10 @@ market:
     enabled: ${KLINE_COLLECTION_ENABLED:true}
   metrics:
     enabled: ${METRIC_COLLECTION_ENABLED:true}
+  alerts:
+    enabled: ${ALERTS_ENABLED:true}
+
+# Production must supply a stable 32-byte base64 encryption key; no development key is bundled.
+integrations:
+  master-key: ${AI2B_MASTER_KEY}
+  key-file: ${AI2B_KEY_FILE:${user.home}/.ai2b/integration.key}

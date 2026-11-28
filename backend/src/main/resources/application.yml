@@ -16,7 +16,7 @@ spring:
       initialization-fail-timeout: 10000
   flyway:
     enabled: true
-    locations: classpath:db/migration
+    locations: classpath:db/migration,classpath:db/vendor/{vendor}
     validate-on-migrate: true
     baseline-on-migrate: false
     clean-disabled: true
@@ -51,3 +51,14 @@ market:
     enabled: true
     initial-delay-ms: 20000
     poll-interval-ms: 30000
+  alerts:
+    enabled: true
+    initial-delay-ms: 25000
+    poll-interval-ms: 5000
+
+# Only local administration. Real integrations are disabled until explicitly saved/enabled.
+integrations:
+  master-key: ${AI2B_MASTER_KEY:}
+  key-file: ${AI2B_KEY_FILE:${user.home}/.ai2b/integration.key}
+  ai-allowed-hosts: ${AI2B_AI_ALLOWED_HOSTS:api.openai.com}
+  allow-local-ai: ${AI2B_ALLOW_LOCAL_AI:false}

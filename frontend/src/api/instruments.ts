@@ -32,7 +32,7 @@ export interface InstrumentPage {
 }
 
 async function readJson(response: Response): Promise<unknown> {
-  const data: unknown = await response.json()
+  const data: unknown = await response.json().catch(() => null)
   if (!response.ok) {
     const message = isObject(data) && typeof data.message === 'string' ? data.message : `HTTP ${response.status}`
     throw new Error(message)
@@ -66,8 +66,8 @@ function isInstrument(value: unknown): value is Instrument {
 }
 
 export async function getInstruments(keyword: string, status: string, page: number,
-  signal: AbortSignal): Promise<InstrumentPage> {
-  const query = new URLSearchParams({ keyword, status, page: String(page), size: '25' })
+  signal: AbortSignal, size = 25): Promise<InstrumentPage> {
+  const query = new URLSearchParams({ keyword, status, page: String(page), size: String(size) })
   const data = await readJson(await fetch(`/api/v1/instruments?${query}`, {
     headers: { Accept: 'application/json' }, cache: 'no-store', signal,
   }))
